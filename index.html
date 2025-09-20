@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en" class="theme-nexus">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg width='64' height='64' viewBox='0 0 64 64' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M32 58C46.3594 58 58 46.3594 58 32C58 17.6406 46.3594 6 32 6C17.6406 6 6 17.6406 6 32C6 46.3594 17.6406 58 32 58Z' stroke='%233B82F6' stroke-width='4' stroke-miterlimit='10' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M32 46C39.7304 46 46 39.7304 46 32C46 24.2696 39.7304 18 32 18C24.2696 18 18 24.2696 18 32C18 39.7304 24.2696 46 32 46Z' stroke='%233B82F6' stroke-width='4' stroke-miterlimit='10' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M32 6V18' stroke='%233B82F6' stroke-width='4' stroke-miterlimit='10' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M32 46V58' stroke='%233B82F6' stroke-width='4' stroke-miterlimit='10' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M58 32H46' stroke='%233B82F6' stroke-width='4' stroke-miterlimit='10' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M18 32H6' stroke='%233B82F6' stroke-width='4' stroke-miterlimit='10' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Nexus</title>
+    <link rel="stylesheet" href="/index.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              primary: {
+                500: 'rgb(var(--color-primary-500) / <alpha-value>)',
+                600: 'rgb(var(--color-primary-600) / <alpha-value>)',
+              },
+              accent: {
+                green: 'rgb(var(--color-accent-green) / <alpha-value>)',
+                red: 'rgb(var(--color-accent-red) / <alpha-value>)',
+                yellow: 'rgb(var(--color-accent-yellow) / <alpha-value>)',
+              },
+              'background-primary': 'rgb(var(--color-background-primary) / <alpha-value>)',
+              'background-secondary': 'rgb(var(--color-background-secondary) / <alpha-value>)',
+              'background-tertiary': 'rgb(var(--color-background-tertiary) / <alpha-value>)',
+              'text-primary': 'rgb(var(--color-text-primary) / <alpha-value>)',
+              'text-secondary': 'rgb(var(--color-text-secondary) / <alpha-value>)',
+              'text-accent': 'rgb(var(--color-text-accent) / <alpha-value>)',
+              'border-neutral': 'rgb(var(--color-border-neutral) / <alpha-value>)',
+              'border-strong': 'rgb(var(--color-border-strong) / <alpha-value>)',
+            }
+          }
+        }
+      }
+    </script>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.1.1/",
+    "react": "https://esm.sh/react@^19.1.1",
+    "react-dom/": "https://esm.sh/react-dom@^19.1.1/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.15.0",
+    "jszip": "https://esm.sh/jszip@3.10.1"
+  }
+}
+</script>
+</head>
+  <body class="bg-background-primary text-text-primary">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

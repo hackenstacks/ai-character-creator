@@ -1,0 +1,206 @@
+/* index.css */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+body {
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* CSS Variables for Theming */
+:root, html.theme-nexus {
+  --color-primary-500: 59 130 246; /* blue-500 */
+  --color-primary-600: 37 99 235;  /* blue-600 */
+  
+  --color-accent-green: 34 197 94;
+  --color-accent-red: 239 68 68;
+  --color-accent-yellow: 234 179 8;
+
+  --color-background-primary: 255 255 255;    /* white */
+  --color-background-secondary: 249 250 251; /* gray-50 */
+  --color-background-tertiary: 229 231 235;  /* gray-200 */
+
+  --color-text-primary: 17 24 39;      /* gray-900 */
+  --color-text-secondary: 107 114 128; /* gray-500 */
+  --color-text-accent: 255 255 255;    /* white on primary */
+
+  --color-border-neutral: 209 213 219; /* gray-300 */
+  --color-border-strong: 156 163 175;  /* gray-400 */
+
+  --scrollbar-track: #E5E7EB;
+  --scrollbar-thumb: #9CA3AF;
+  --scrollbar-thumb-hover: #6B7280;
+}
+
+html.dark.theme-nexus {
+  --color-primary-500: 59 130 246;
+  --color-primary-600: 37 99 235;
+
+  --color-background-primary: 17 24 39;     /* gray-900 */
+  --color-background-secondary: 31 41 55;   /* gray-800 */
+  --color-background-tertiary: 55 65 81;    /* gray-700 */
+
+  --color-text-primary: 229 231 235;    /* gray-200 */
+  --color-text-secondary: 156 163 175;  /* gray-400 */
+  --color-text-accent: 255 255 255;
+
+  --color-border-neutral: 55 65 81;   /* gray-700 */
+  --color-border-strong: 75 85 99;    /* gray-600 */
+
+  --scrollbar-track: #1F2937;
+  --scrollbar-thumb: #4B5563;
+  --scrollbar-thumb-hover: #6B7280;
+}
+
+html.theme-synthwave {
+  --color-primary-500: 246 1 157;
+  --color-primary-600: 210 0 130;
+
+  --color-accent-green: 0 240 255;
+  --color-accent-red: 255 107 107;
+  --color-accent-yellow: 255 231 107;
+
+  --color-background-primary: 240 230 255;
+  --color-background-secondary: 230 220 245;
+  --color-background-tertiary: 210 200 225;
+
+  --color-text-primary: 26 16 60;
+  --color-text-secondary: 87 75 120;
+  --color-text-accent: 255 255 255;
+
+  --color-border-neutral: 200 190 215;
+  --color-border-strong: 150 140 165;
+  
+  --scrollbar-track: #e6dcf5;
+  --scrollbar-thumb: #968ca5;
+  --scrollbar-thumb-hover: #574b78;
+}
+
+html.dark.theme-synthwave {
+  --color-primary-500: 246 1 157; /* hot pink */
+  --color-primary-600: 210 0 130;
+
+  --color-background-primary: 26 16 60;   /* deep indigo */
+  --color-background-secondary: 40 25 90;
+  --color-background-tertiary: 60 40 120;
+
+  --color-text-primary: 240 240 240;
+  --color-text-secondary: 170 160 200;
+  --color-text-accent: 255 255 255;
+
+  --color-border-neutral: 60 40 120;
+  --color-border-strong: 80 60 150;
+  
+  --scrollbar-track: #28195a;
+  --scrollbar-thumb: #6040c0;
+  --scrollbar-thumb-hover: #f6019d;
+}
+
+html.theme-forest {
+  --color-primary-500: 163 179 140;
+  --color-primary-600: 140 155 120;
+
+  --color-accent-green: 140 155 120;
+  --color-accent-red: 194 95 95;
+  --color-accent-yellow: 218 165 32;
+
+  --color-background-primary: 251 250 242; /* parchment white */
+  --color-background-secondary: 245 243 230;
+  --color-background-tertiary: 228 230 195;
+
+  --color-text-primary: 50 60 50;
+  --color-text-secondary: 107 90 77;
+  --color-text-accent: 255 255 255;
+
+  --color-border-neutral: 210 212 180;
+  --color-border-strong: 180 185 160;
+
+  --scrollbar-track: #f5f3e6;
+  --scrollbar-thumb: #b4b9a0;
+  --scrollbar-thumb-hover: #6b5a4d;
+}
+
+html.dark.theme-forest {
+  --color-primary-500: 163 179 140; /* sage green */
+  --color-primary-600: 140 155 120;
+
+  --color-background-primary: 47 61 48; /* dark forest */
+  --color-background-secondary: 55 75 56;
+  --color-background-tertiary: 80 95 81;
+
+  --color-text-primary: 228 230 195; /* parchment */
+  --color-text-secondary: 180 185 160;
+  --color-text-accent: 47 61 48;
+
+  --color-border-neutral: 80 95 81;
+  --color-border-strong: 107 90 77; /* earthy brown */
+
+  --scrollbar-track: #374b38;
+  --scrollbar-thumb: #6b5a4d;
+  --scrollbar-thumb-hover: #a3b38c;
+}
+
+html.theme-crimson {
+  --color-primary-500: 220 20 60;
+  --color-primary-600: 180 15 50;
+  
+  --color-accent-green: 60 179 113;
+  --color-accent-red: 220 20 60;
+  --color-accent-yellow: 255 215 0;
+
+  --color-background-primary: 255 255 255;
+  --color-background-secondary: 245 245 245;
+  --color-background-tertiary: 220 220 220;
+
+  --color-text-primary: 18 18 18;
+  --color-text-secondary: 100 100 100;
+  --color-text-accent: 255 255 255;
+
+  --color-border-neutral: 220 220 220;
+  --color-border-strong: 180 180 180;
+  
+  --scrollbar-track: #f5f5f5;
+  --scrollbar-thumb: #b4b4b4;
+  --scrollbar-thumb-hover: #646464;
+}
+
+html.dark.theme-crimson {
+  --color-primary-500: 220 20 60; /* crimson */
+  --color-primary-600: 180 15 50;
+
+  --color-background-primary: 18 18 18; /* near black */
+  --color-background-secondary: 30 30 30;
+  --color-background-tertiary: 50 50 50;
+
+  --color-text-primary: 237 242 244; /* white smoke */
+  --color-text-secondary: 141 153 174; /* cool gray */
+  --color-text-accent: 255 255 255;
+
+  --color-border-neutral: 50 50 50;
+  --color-border-strong: 80 80 80;
+
+  --scrollbar-track: #1e1e1e;
+  --scrollbar-thumb: #505050;
+  --scrollbar-thumb-hover: #dc143c;
+}
+
+
+/* Add a scrollbar style that fits the theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 4px;
+  border: 2px solid var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
