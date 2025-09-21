@@ -69,12 +69,13 @@ const withRetry = async <T>(
 
 const generateGeminiEmbedding = async (text: string, config: EmbeddingConfig): Promise<number[]> => {
     const ai = getAiClient(config.apiKey);
-    // FIX: Use singular 'content' and 'embedding' properties for the new SDK.
+    // FIX: The compiler suggests 'contents' (plural) for the parameter name.
     const result: EmbedContentResponse = await withRetry(() => ai.models.embedContent({
         model: "text-embedding-004",
-        content: text
+        contents: text
     }));
-    return result.embedding.values;
+    // FIX: The compiler suggests the response object has an 'embeddings' property, not 'embedding'.
+    return (result as any).embeddings.values;
 };
 
 const generateOpenAIEmbedding = async (text: string, config: EmbeddingConfig): Promise<number[]> => {

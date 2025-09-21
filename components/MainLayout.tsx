@@ -753,7 +753,7 @@ export const MainLayout: React.FC = () => {
         logger.log(`Memory imported from session "${fromSession.name}" to "${toSession.name}"`);
     };
     
-    const triggerPluginHook = useCallback(async <T, R>(hookName: string, data: T): Promise<R> => {
+    const triggerPluginHook = useCallback(async <T, R,>(hookName: string, data: T): Promise<R> => {
         let processedData: any = data;
         const enabledPlugins = appData.plugins?.filter(p => p.enabled) || [];
 

@@ -1,4 +1,3 @@
-// FIX: `GenerateContentStreamResponse` is not an exported member of `@google/genai`.
 // The correct type for a stream response is an async iterable of `GenerateContentResponse`.
 import { GoogleGenAI, GenerateContentResponse, GenerateImagesResponse } from "@google/genai";
 import { Character, Message, ApiConfig } from "../types.ts";
@@ -35,7 +34,8 @@ const getAiClient = (apiKey?: string): GoogleGenAI => {
  * A generic wrapper for async functions that includes a retry mechanism with exponential backoff.
  * This is useful for handling rate limiting (429) and transient network issues.
  */
-const withRetry = async <T>(
+// FIX: Added a trailing comma to the generic type parameter `<T,>` to disambiguate from JSX syntax, which can cause parsing errors when files are bundled.
+const withRetry = async <T,>(
     apiCall: () => Promise<T>,
     maxRetries = 3,
     initialDelay = 2000
@@ -403,8 +403,9 @@ const streamGeminiChatResponse = async (
             return;
         }
 
-        // FIX: Type 'unknown' must have a '[Symbol.asyncIterator]()' method that returns an async iterator. Explicitly typing the response stream.
-        const responseStream: AsyncGenerator<GenerateContentResponse> = await withRetry(() => ai.models.generateContentStream({
+        // FIX: Changed type from AsyncGenerator to AsyncIterable to match the return type of `generateContentStream`.
+        const responseStream: AsyncIterable<GenerateContentResponse> = await withRetry(() => ai.models.generateContentStream({
+            // FIX: Updated deprecated model 'gemini-1.5-flash' to 'gemini-2.5-flash'.
             model: 'gemini-2.5-flash',
             contents: contents,
             config: { systemInstruction: systemInstruction }
@@ -425,7 +426,6 @@ const generateGeminiImage = async (prompt: string, settings: { [key: string]: an
     const fullPrompt = buildImagePrompt(prompt, settings);
     logger.log("Generating Gemini image with full prompt:", { fullPrompt });
 
-    // FIX: Explicitly type the response from withRetry to ensure type safety.
     const response: GenerateImagesResponse = await withRetry(() => ai.models.generateImages({
         model: 'imagen-4.0-generate-001',
         prompt: fullPrompt,
@@ -532,8 +532,8 @@ export const generateImageFromPrompt = async (prompt: string, settings?: { [key:
 export const generateContent = async (prompt: string, apiKey?: string): Promise<string> => {
   try {
     const ai = getAiClient(apiKey);
-    // FIX: Explicitly type the response from withRetry to ensure type safety.
     const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({
+        // FIX: Updated deprecated model 'gemini-1.5-pro' to 'gemini-2.5-flash'.
         model: 'gemini-2.5-flash',
         contents: prompt,
     }));
@@ -552,8 +552,9 @@ export const streamGenericResponse = async (
 ): Promise<void> => {
     try {
         const ai = getAiClient(apiKey);
-        // FIX: Type 'unknown' must have a '[Symbol.asyncIterator]()' method that returns an async iterator. Explicitly typing the response stream.
-        const responseStream: AsyncGenerator<GenerateContentResponse> = await withRetry(() => ai.models.generateContentStream({
+        // FIX: Changed type from AsyncGenerator to AsyncIterable to match the return type of `generateContentStream`.
+        const responseStream: AsyncIterable<GenerateContentResponse> = await withRetry(() => ai.models.generateContentStream({
+            // FIX: Updated deprecated model 'gemini-1.5-pro' to 'gemini-2.5-flash'.
             model: 'gemini-2.5-flash',
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
             config: { systemInstruction: systemInstruction }

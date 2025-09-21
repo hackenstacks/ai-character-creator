@@ -68,6 +68,10 @@ AI Nexus is a static web application and does not require a complex build proces
 3.  **Access the App**:
     - Once the server is running, open your web browser and navigate to the address provided by your server, which is typically `http://localhost:8000`.
 
+4.  **Get Started**:
+    - AI Nexus starts with a clean slate. No default characters are pre-loaded.
+    - To get started, you can import our example characters. Use the **Import** button in the sidebar (upload icon) and select `zombie-apocalypse.json` or `amy-aime.json` from the project directory.
+
 **Important Note on API Keys**:
 The application is designed to use an API key from a `process.env.API_KEY` environment variable. When running locally, this variable won't be set. To use AI features, you must configure a custom API key within the app:
 - For a character: Edit the character -> API Configuration -> Select "Google Gemini (Custom Key)" or "OpenAI-Compatible" and enter your details.
