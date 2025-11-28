@@ -35,6 +35,55 @@ nexus.log('UPPERCASE plugin loaded and ready.');
 
 const imageStyles = ["Default (None)", "Anime/Manga", "Photorealistic", "Digital Painting", "Fantasy Art", "Cyberpunk", "Vintage Photo", "Low Poly", "Custom"];
 
+// Constants for Image Providers and their Models
+const PROVIDER_MODELS: Record<string, string[]> = {
+    'pollinations': [
+        'flux', 
+        'flux-realism', 
+        'flux-anime',
+        'flux-3d',
+        'any-dark', 
+        'turbo', 
+        'midjourney', 
+        'unity', 
+        'niji',
+        'surreal',
+        'impressionism'
+    ],
+    'aihorde': [
+        'stable_diffusion',
+        'stable_diffusion_2.1',
+        'ICBINP - I Can\'t Believe It\'s Not Photography',
+        'ChilloutMix',
+        'Deliberate',
+        'Dreamshaper',
+        'Realistic Vision',
+        'Anything Diffusion',
+        'Midjourney Diffusion',
+        'OpenJourney'
+    ],
+    'huggingface': [
+        'stabilityai/stable-diffusion-xl-base-1.0',
+        'runwayml/stable-diffusion-v1-5',
+        'prompthero/openjourney',
+        'CompVis/stable-diffusion-v1-4',
+        'black-forest-labs/FLUX.1-dev',
+        'black-forest-labs/FLUX.1-schnell',
+        'stabilityai/stable-diffusion-2-1',
+        'hakurei/waifu-diffusion',
+        'WarriorMama777/OrangeMixs'
+    ],
+    'stability': [
+        'stable-diffusion-xl-1024-v1-0',
+        'stable-diffusion-v1-6',
+        'stable-diffusion-512-v2-1'
+    ],
+    'gemini': ['gemini-2.5-flash-image'],
+    'default': ['gemini-2.5-flash-image'],
+    'openai': ['dall-e-3', 'dall-e-2'],
+    'imagerouter': [] // Typically routed dynamically or OpenAI compatible
+};
+
 export const PluginManager: React.FC<PluginManagerProps> = ({ plugins, onPluginsUpdate, onSetConfirmation }) => {
   const [editingPlugin, setEditingPlugin] = useState<Plugin | null>(null);
   const [isCreating, setIsCreating] = useState(false);
@@ -214,6 +263,16 @@ export const PluginManager: React.FC<PluginManagerProps> = ({ plugins, onPlugins
   const isDefaultImagePlugin = editingPlugin?.id === 'default-image-generator';
   const isDefaultTtsPlugin = editingPlugin?.id === 'default-tts-narrator';
 
+  // Helper to get available models for the current service
+  const getCurrentServiceModels = () => {
+      const service = formState.settings?.service || 'default';
+      return PROVIDER_MODELS[service] || [];
+  };
+
+  const currentModels = getCurrentServiceModels();
+  const showApiEndpoint = ['openai', 'imagerouter'].includes(formState.settings?.service);
+  const showApiKey = ['openai', 'gemini', 'stability', 'huggingface', 'aihorde', 'imagerouter'].includes(formState.settings?.service);
+
   if (editingPlugin || isCreating) {
      return (
       <div className="flex-1 flex flex-col bg-nexus-gray-light-200 dark:bg-nexus-gray-900 h-full">
@@ -241,17 +300,32 @@ export const PluginManager: React.FC<PluginManagerProps> = ({ plugins, onPlugins
               {isDefaultImagePlugin && (
                 <div className="p-4 rounded-md border border-nexus-gray-light-400 dark:border-nexus-gray-700 bg-nexus-gray-light-200/50 dark:bg-nexus-gray-800/50 space-y-4">
                   <h3 className="text-lg font-medium text-nexus-gray-900 dark:text-white mb-3">Image Generation Settings</h3>
-                   <div>
-                        <label htmlFor="image-style" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">Image Style</label>
-                        <select
-                            id="image-style"
-                            value={formState.settings?.style || 'Default (None)'}
-                            onChange={(e) => handleSettingsChange('style', e.target.value)}
-                            className="mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md shadow-sm py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
-                        >
-                            {imageStyles.map(style => <option key={style} value={style}>{style}</option>)}
-                        </select>
-                    </div>
+                   
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                       <div>
+                            <label htmlFor="image-style" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">Image Style</label>
+                            <select
+                                id="image-style"
+                                value={formState.settings?.style || 'Default (None)'}
+                                onChange={(e) => handleSettingsChange('style', e.target.value)}
+                                className="mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md shadow-sm py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
+                            >
+                                {imageStyles.map(style => <option key={style} value={style}>{style}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label htmlFor="negative-prompt" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">Negative Prompt</label>
+                            <input
+                                type="text"
+                                id="negative-prompt"
+                                value={formState.settings?.negativePrompt || ''}
+                                onChange={(e) => handleSettingsChange('negativePrompt', e.target.value)}
+                                className="mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md shadow-sm py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
+                                placeholder="e.g., ugly, blurry, deformed"
+                            />
+                        </div>
+                   </div>
+
                      {formState.settings?.style === 'Custom' && (
                          <div>
                             <label htmlFor="custom-style-prompt" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">Custom Style Prompt</label>
@@ -265,97 +339,110 @@ export const PluginManager: React.FC<PluginManagerProps> = ({ plugins, onPlugins
                             />
                          </div>
                     )}
-                    <div>
-                        <label htmlFor="negative-prompt" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">Negative Prompt</label>
-                        <textarea
-                            id="negative-prompt"
-                            value={formState.settings?.negativePrompt || ''}
-                            onChange={(e) => handleSettingsChange('negativePrompt', e.target.value)}
-                            rows={2}
-                            className="mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md shadow-sm py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
-                            placeholder="e.g., ugly, blurry, deformed"
-                        />
-                    </div>
-                  <h3 className="text-lg font-medium text-nexus-gray-900 dark:text-white pt-4 border-t border-nexus-gray-light-400 dark:border-nexus-gray-700">API Configuration</h3>
+                    
+                  <h3 className="text-lg font-medium text-nexus-gray-900 dark:text-white pt-4 border-t border-nexus-gray-light-400 dark:border-nexus-gray-700">Service Configuration</h3>
+                  
                   <div className="space-y-4">
                     <div>
                       <label htmlFor="api-service" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">API Service</label>
                       <select 
                           id="api-service"
-                          value={formState.settings?.service || 'default'}
-                          onChange={(e) => handleSettingsChange('service', e.target.value as ApiConfig['service'])}
+                          value={formState.settings?.service || 'pollinations'}
+                          onChange={(e) => {
+                              handleSettingsChange('service', e.target.value);
+                              // Reset model when service changes to first available or empty
+                              const models = PROVIDER_MODELS[e.target.value] || [];
+                              handleSettingsChange('model', models.length > 0 ? models[0] : '');
+                          }}
                           className="mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md shadow-sm py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
                       >
-                          <option value="default">Default (Gemini)</option>
+                          <option value="pollinations">Pollinations.ai (Free, No Key)</option>
+                          <option value="aihorde">AI Horde (Free/Kudos, Slow)</option>
+                          <option value="huggingface">Hugging Face (Free Tier/Pro)</option>
+                          <option value="imagerouter">ImageRouter.io / OpenAI Compat</option>
+                          <option value="stability">Stability.ai (Paid)</option>
                           <option value="gemini">Google Gemini (Custom Key)</option>
-                          <option value="openai">OpenAI-Compatible (e.g., DALL-E)</option>
+                          <option value="default">Google Gemini (Default Env Key)</option>
+                          <option value="openai">OpenAI-Compatible (e.g. DALL-E, Local)</option>
                       </select>
                     </div>
-                    {formState.settings?.service === 'gemini' && (
+
+                    {/* Dynamic Model Dropdown */}
+                    <div>
+                        <label htmlFor="api-model" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">Model</label>
+                        <div className="flex gap-2">
+                            <select
+                                id="api-model-select"
+                                value={currentModels.includes(formState.settings?.model) ? formState.settings?.model : 'custom'}
+                                onChange={(e) => {
+                                    if(e.target.value !== 'custom') {
+                                        handleSettingsChange('model', e.target.value);
+                                    } else {
+                                        // If switching to custom, keep current value if it was not in list, or clear if it was
+                                        if (currentModels.includes(formState.settings?.model)) {
+                                            handleSettingsChange('model', '');
+                                        }
+                                    }
+                                }}
+                                className="flex-1 mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md shadow-sm py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
+                            >
+                                {currentModels.map(m => <option key={m} value={m}>{m}</option>)}
+                                <option value="custom">Other / Custom...</option>
+                            </select>
+                        </div>
+                        {/* Show text input if 'custom' is effectively selected (value not in known list) */}
+                        {(!currentModels.includes(formState.settings?.model) || currentModels.length === 0) && (
+                             <input
+                                id="api-model-text"
+                                type="text"
+                                value={formState.settings?.model || ''}
+                                onChange={(e) => handleSettingsChange('model', e.target.value)}
+                                className="mt-2 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
+                                placeholder="Enter custom model ID"
+                            />
+                        )}
+                    </div>
+
+                    {showApiEndpoint && (
                         <div>
-                          <label htmlFor="api-key" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">Gemini API Key</label>
+                            <label htmlFor="api-endpoint" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">API Endpoint</label>
+                            <input
+                                id="api-endpoint"
+                                type="text"
+                                value={formState.settings?.apiEndpoint || ''}
+                                onChange={(e) => handleSettingsChange('apiEndpoint', e.target.value)}
+                                className="mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
+                                placeholder="e.g., https://api.openai.com/v1/images/generations"
+                            />
+                        </div>
+                    )}
+
+                    {showApiKey && (
+                        <div>
+                          <label htmlFor="api-key" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">API Key</label>
                           <input
                             id="api-key"
                             type="password"
                             value={formState.settings?.apiKey || ''}
                             onChange={(e) => handleSettingsChange('apiKey', e.target.value)}
                             className="mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md shadow-sm py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
-                            placeholder="Leave blank to use default key"
+                            placeholder={formState.settings?.service === 'aihorde' ? '0000000000 for Anonymous' : 'Enter API Key'}
                           />
                         </div>
                     )}
-                     {formState.settings?.service === 'openai' && (
-                          <>
-                              <div>
-                                  <label htmlFor="api-endpoint" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">API Endpoint</label>
-                                  <input
-                                      id="api-endpoint"
-                                      type="text"
-                                      value={formState.settings?.apiEndpoint || ''}
-                                      onChange={(e) => handleSettingsChange('apiEndpoint', e.target.value)}
-                                      className="mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
-                                      placeholder="e.g., https://api.openai.com/v1/images/generations"
-                                  />
-                              </div>
-                               <div>
-                                  <label htmlFor="api-key" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">API Key</label>
-                                  <input
-                                      id="api-key"
-                                      type="password"
-                                      value={formState.settings?.apiKey || ''}
-                                      onChange={(e) => handleSettingsChange('apiKey', e.target.value)}
-                                      className="mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
-                                      placeholder="API Key"
-                                  />
-                              </div>
-                              <div>
-                                  <label htmlFor="api-model" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">Model Name</label>
-                                  <input
-                                      id="api-model"
-                                      type="text"
-                                      value={formState.settings?.model || ''}
-                                      onChange={(e) => handleSettingsChange('model', e.target.value)}
-                                      className="mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
-                                      placeholder="e.g., dall-e-3"
-                                  />
-                              </div>
-                          </>
-                      )}
-                      {(formState.settings?.service === 'gemini' || formState.settings?.service === 'openai') && (
-                        <div>
-                            <label htmlFor="plugin-api-rate-limit" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">Request Delay (ms)</label>
-                            <input
-                                id="plugin-api-rate-limit"
-                                type="number"
-                                value={formState.settings?.rateLimit || ''}
-                                onChange={(e) => handleSettingsChange('rateLimit', e.target.value ? parseInt(e.target.value, 10) : undefined)}
-                                className="mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
-                                placeholder="e.g., 1000 (for 1 request per second)"
-                                min="0"
-                            />
-                            <p className="text-xs text-nexus-gray-700 dark:text-nexus-gray-400 mt-1">Minimum time to wait between image generation requests to avoid rate limits.</p>
-                        </div>
-                    )}
+
+                    <div>
+                        <label htmlFor="plugin-api-rate-limit" className="block text-sm font-medium text-nexus-gray-800 dark:text-nexus-gray-300">Request Delay (ms)</label>
+                        <input
+                            id="plugin-api-rate-limit"
+                            type="number"
+                            value={formState.settings?.rateLimit || ''}
+                            onChange={(e) => handleSettingsChange('rateLimit', e.target.value ? parseInt(e.target.value, 10) : undefined)}
+                            className="mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
+                            placeholder="e.g., 1000 (for 1 request per second)"
+                            min="0"
+                        />
+                    </div>
                   </div>
                 </div>
               )}

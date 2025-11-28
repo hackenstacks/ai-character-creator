@@ -34,7 +34,7 @@ import { GlobeIcon } from './icons/GlobeIcon';
 const defaultImagePlugin: Plugin = {
     id: 'default-image-generator',
     name: 'Image Generation',
-    description: 'Generates images from prompts. Single-click the image icon for a prompt, double-click to summarize chat context.',
+    description: 'Generates images from prompts. Supports Pollinations (Free), AI Horde (Free), Hugging Face, Stability.ai, Gemini, and more.',
     enabled: true,
     code: `
 // Default Image Generation Plugin
@@ -66,7 +66,8 @@ nexus.hooks.register('generateImage', async (payload) => {
 nexus.log('Image Generation plugin loaded.');
 `,
     settings: {
-        service: 'default',
+        service: 'pollinations',
+        model: 'flux',
         style: 'Default (None)',
         negativePrompt: '',
     }

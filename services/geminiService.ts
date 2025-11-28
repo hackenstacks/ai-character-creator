@@ -28,6 +28,16 @@ const getAiClient = (apiKey?: string): GoogleGenAI => {
     throw new Error("Default Gemini API key not configured. Please set a custom API key for the character or plugin.");
 }
 
+// --- Helper: Blob to Base64 ---
+const blobToBase64 = (blob: Blob): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+};
+
 // --- OpenAI Compatible Service ---
 
 /**
@@ -239,6 +249,8 @@ const buildImagePrompt = (prompt: string, settings: { [key: string]: any }): str
     return `${stylePrompt}${prompt}${negativePrompt}`;
 };
 
+// --- Image Generators ---
+
 const generateOpenAIImage = async (prompt: string, settings: { [key: string]: any }): Promise<string> => {
     const fullPrompt = buildImagePrompt(prompt, settings);
     logger.log("Generating OpenAI image with full prompt:", { fullPrompt });
@@ -260,19 +272,6 @@ const generateOpenAIImage = async (prompt: string, settings: { [key: string]: an
 
     if (!response.ok) {
         const errorBody = await response.text();
-        if (response.status === 429) {
-            let errorMessage = `The API is rate-limiting image generation requests.`;
-            try {
-                const parsedError = JSON.parse(errorBody);
-                if (parsedError.message) {
-                    errorMessage += ` Message: ${parsedError.message}`;
-                }
-            } catch (e) {
-                errorMessage += ` Details: ${errorBody}`;
-            }
-            logger.error("OpenAI-compatible image generation failed due to rate limiting after all retries.", { status: response.status, body: errorBody });
-            throw new Error(errorMessage);
-        }
         throw new Error(`Image generation failed with status ${response.status}: ${errorBody}`);
     }
 
@@ -284,6 +283,219 @@ const generateOpenAIImage = async (prompt: string, settings: { [key: string]: an
     }
     return `data:image/png;base64,${base64Image}`;
 };
+
+const generatePollinationsImage = async (prompt: string, settings: { [key: string]: any }): Promise<string> => {
+    const fullPrompt = buildImagePrompt(prompt, settings);
+    logger.log("Generating Pollinations image...", { fullPrompt });
+    
+    // Construct URL parameters
+    const model = settings.model ? `&model=${encodeURIComponent(settings.model)}` : '';
+    const seed = Math.floor(Math.random() * 1000000000);
+    // Ensure prompt is properly encoded
+    const encodedPrompt = encodeURIComponent(fullPrompt);
+    const url = `https://pollinations.ai/p/${encodedPrompt}?width=1024&height=1024${model}&seed=${seed}&nologo=true`;
+
+    try {
+        const response = await fetchWithRetry(url, {
+            method: 'GET',
+        });
+
+        if (!response.ok) {
+            throw new Error(`Pollinations API failed with status ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        return await blobToBase64(blob);
+    } catch (error) {
+        logger.warn("Pollinations fetch failed, falling back to direct URL. Error:", error);
+        // Fallback: Return the direct URL. The UI can display this, though it won't be saved as a base64 snapshot.
+        // This handles cases where CORS blocks the fetch but the browser can still display the image tag.
+        return url;
+    }
+};
+
+const generateHuggingFaceImage = async (prompt: string, settings: { [key: string]: any }): Promise<string> => {
+    const fullPrompt = buildImagePrompt(prompt, settings);
+    const model = settings.model || 'stabilityai/stable-diffusion-xl-base-1.0';
+    const endpoint = `https://api-inference.huggingface.co/models/${model}`;
+    const apiKey = settings.apiKey;
+
+    logger.log(`Generating Hugging Face image with model ${model}...`);
+
+    const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+    };
+    
+    // Only add Authorization if key is present. Many HF models work free (rate-limited) without a key.
+    if (apiKey && apiKey.trim()) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
+    const response = await fetchWithRetry(endpoint, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({ inputs: fullPrompt }),
+    });
+
+    if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Hugging Face API failed: ${errorBody}`);
+    }
+
+    const blob = await response.blob();
+    return await blobToBase64(blob);
+};
+
+const generateStabilityImage = async (prompt: string, settings: { [key: string]: any }): Promise<string> => {
+    const fullPrompt = buildImagePrompt(prompt, settings);
+    const engineId = settings.model || 'stable-diffusion-xl-1024-v1-0';
+    const apiKey = settings.apiKey;
+    const url = `https://api.stability.ai/v1/generation/${engineId}/text-to-image`;
+
+    logger.log(`Generating Stability.ai image with model ${engineId}...`);
+
+    if (!apiKey) {
+        throw new Error("Stability.ai API key is required.");
+    }
+
+    const response = await fetchWithRetry(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+            text_prompts: [
+                {
+                    text: fullPrompt,
+                    weight: 1
+                }
+            ],
+            cfg_scale: 7,
+            height: 1024,
+            width: 1024,
+            samples: 1,
+            steps: 30,
+        }),
+    });
+
+    if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Stability API failed: ${errorBody}`);
+    }
+
+    const json = await response.json();
+    const base64Image = json.artifacts?.[0]?.base64;
+
+    if (!base64Image) {
+        throw new Error("Stability API response did not contain image data.");
+    }
+    return `data:image/png;base64,${base64Image}`;
+};
+
+// --- AI Horde Generator ---
+const generateAIHordeImage = async (prompt: string, settings: { [key: string]: any }): Promise<string> => {
+    const fullPrompt = buildImagePrompt(prompt, settings);
+    logger.log("Submitting job to AI Horde...", { fullPrompt });
+
+    const apiKey = settings.apiKey || '0000000000'; // Anonymous key if none provided
+    const model = settings.model || 'stable_diffusion';
+    
+    // 1. Submit Generation Request
+    const submitResponse = await fetch("https://stablehorde.net/api/v2/generate/async", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "apikey": apiKey,
+            "Client-Agent": "AI-Nexus:1.0:Unknown",
+        },
+        body: JSON.stringify({
+            prompt: fullPrompt,
+            params: {
+                n: 1,
+                width: 512,
+                height: 512, // Keep small for free tier speed
+                steps: 30,
+                karras: true,
+                tiling: false,
+                hires_fix: false,
+                clip_skip: 1,
+                sampler_name: "k_euler",
+            },
+            nsfw: true, // Allow NSFW if the user wants, filtering handled by client or prompt
+            censor_nsfw: false,
+            trusted_workers: false,
+            models: [model],
+        }),
+    });
+
+    if (!submitResponse.ok) {
+        const errText = await submitResponse.text();
+        throw new Error(`AI Horde submission failed: ${errText}`);
+    }
+
+    const submitJson = await submitResponse.json();
+    const id = submitJson.id;
+    if (!id) throw new Error("AI Horde did not return a Job ID.");
+
+    logger.log(`AI Horde Job ID: ${id}. Polling for status...`);
+
+    // 2. Poll for Status
+    let attempts = 0;
+    const maxAttempts = 60; // Wait up to 2-3 minutes approx (assuming 2-3s delay)
+    
+    while (attempts < maxAttempts) {
+        await new Promise(r => setTimeout(r, 2000 + attempts * 100)); // Exponential backoff polling
+        attempts++;
+
+        const statusResponse = await fetch(`https://stablehorde.net/api/v2/generate/check/${id}`);
+        if (!statusResponse.ok) continue; // Transient network error, retry
+
+        const statusJson = await statusResponse.json();
+        
+        if (statusJson.done) {
+            // 3. Retrieve Result
+            const resultResponse = await fetch(`https://stablehorde.net/api/v2/generate/status/${id}`);
+            if (!resultResponse.ok) throw new Error("Failed to retrieve final AI Horde result.");
+            
+            const resultJson = await resultResponse.json();
+            const generation = resultJson.generations?.[0];
+            
+            if (generation && generation.img) {
+                // Determine if it's a URL or base64 (Horde usually returns URL)
+                const imgData = generation.img;
+                if (imgData.startsWith('http')) {
+                    // It's a URL, fetch it
+                    try {
+                        const imgFetch = await fetch(imgData);
+                        if (!imgFetch.ok) throw new Error("Fetch failed");
+                        const blob = await imgFetch.blob();
+                        return await blobToBase64(blob);
+                    } catch (e) {
+                        logger.warn("Failed to fetch Horde image blob, returning URL.", e);
+                        return imgData; // Fallback to URL if fetch fails
+                    }
+                } else {
+                    // It might be raw R2 output or base64 (less common now but possible)
+                    return `data:image/webp;base64,${imgData}`; // Horde usually returns WebP
+                }
+            }
+            throw new Error("AI Horde generation completed but no image data found.");
+        }
+        
+        if (statusJson.faulted) {
+            throw new Error("AI Horde generation faulted/failed on worker.");
+        }
+        
+        if (statusJson.wait_time > 0) {
+             logger.debug(`Horde queue position: ${statusJson.queue_position}, Est. wait: ${statusJson.wait_time}s`);
+        }
+    }
+    
+    throw new Error("AI Horde generation timed out.");
+};
+
 
 // --- Gemini Service ---
 
@@ -497,8 +709,9 @@ export const streamChatResponse = async (
 
 export const generateImageFromPrompt = async (prompt: string, settings?: { [key: string]: any }): Promise<string> => {
     try {
+        const safeSettings = settings || {};
         // Rate Limiting for image generation
-        const rateLimit = settings?.rateLimit;
+        const rateLimit = safeSettings.rateLimit;
         if (rateLimit && rateLimit > 0) {
             const pluginId = 'default-image-generator';
             const lastRequestTime = lastRequestTimestamps.get(pluginId) || 0;
@@ -513,17 +726,35 @@ export const generateImageFromPrompt = async (prompt: string, settings?: { [key:
             lastRequestTimestamps.set(pluginId, Date.now());
         }
 
-        const service = settings?.service || 'default';
-        if (service === 'openai') {
-            logger.log("Using OpenAI-compatible API for image generation.", { endpoint: settings?.apiEndpoint, model: settings?.model });
-            if (!settings?.apiEndpoint) {
-                throw new Error("OpenAI-compatible API endpoint is not configured for the image generator plugin.");
-            }
-            return await generateOpenAIImage(prompt, settings);
-        } else {
-            logger.log("Using Gemini API for image generation.");
-            return await generateGeminiImage(prompt, settings || {});
+        const service = safeSettings.service || 'default';
+        
+        switch (service) {
+            case 'openai':
+            case 'imagerouter': // ImageRouter usually supports OpenAI format or specific POST. Use OpenAI handler.
+                if (!safeSettings.apiEndpoint) {
+                    throw new Error(`${service} requires a configured API endpoint.`);
+                }
+                return await generateOpenAIImage(prompt, safeSettings);
+            
+            case 'pollinations':
+                return await generatePollinationsImage(prompt, safeSettings);
+            
+            case 'huggingface':
+                return await generateHuggingFaceImage(prompt, safeSettings);
+            
+            case 'stability':
+                return await generateStabilityImage(prompt, safeSettings);
+                
+            case 'aihorde':
+                return await generateAIHordeImage(prompt, safeSettings);
+
+            case 'gemini':
+            case 'default':
+            default:
+                // Default fallback to Gemini
+                return await generateGeminiImage(prompt, safeSettings);
         }
+
     } catch (error) {
         logger.error("Error in generateImageFromPrompt:", error);
         const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
