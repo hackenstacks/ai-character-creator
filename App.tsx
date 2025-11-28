@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { AuthScreen } from './components/AuthScreen.tsx';
-import { MainLayout } from './components/MainLayout.tsx';
-import { hasMasterPassword, verifyMasterPassword } from './services/secureStorage.ts';
-import { logger } from './services/loggingService.ts';
-import { applyTheme } from './services/themeService.ts';
+import { AuthScreen } from './components/AuthScreen';
+import { MainLayout } from './components/MainLayout';
+import { hasMasterPassword, verifyMasterPassword } from './services/secureStorage';
+import { logger } from './services/loggingService';
+import { applyTheme } from './services/themeService';
 
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);

@@ -1,7 +1,7 @@
 // The correct type for a stream response is an async iterable of `GenerateContentResponse`.
 import { GoogleGenAI, GenerateContentResponse, GenerateImagesResponse } from "@google/genai";
-import { Character, Message, ApiConfig } from "../types.ts";
-import { logger } from "./loggingService.ts";
+import { Character, Message, ApiConfig } from "../types";
+import { logger } from "./loggingService";
 
 // --- Rate Limiting ---
 const lastRequestTimestamps = new Map<string, number>();
@@ -34,7 +34,6 @@ const getAiClient = (apiKey?: string): GoogleGenAI => {
  * A generic wrapper for async functions that includes a retry mechanism with exponential backoff.
  * This is useful for handling rate limiting (429) and transient network issues.
  */
-// FIX: Added a trailing comma to the generic type parameter `<T,>` to disambiguate from JSX syntax, which can cause parsing errors when files are bundled.
 const withRetry = async <T,>(
     apiCall: () => Promise<T>,
     maxRetries = 3,
@@ -50,8 +49,6 @@ const withRetry = async <T,>(
 
             if (error && typeof error.message === 'string') {
                  errorMessage = error.message;
-                 // Check for 429 status code or RESOURCE_EXHAUSTED in the message.
-                 // This covers both plain text errors and JSON-formatted error strings.
                  if (errorMessage.includes('429') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
                      isRateLimitError = true;
                  }
@@ -75,15 +72,9 @@ const withRetry = async <T,>(
             throw error;
         }
     }
-    // This line should theoretically not be reached if the loop is correctly structured,
-    // but it's required for TypeScript to be sure a value is always returned or an error thrown.
     throw new Error('API request failed to complete after all retries.');
 };
 
-/**
- * A wrapper for fetch that includes a retry mechanism with exponential backoff.
- * This is useful for handling rate limiting (429) and transient network issues.
- */
 const fetchWithRetry = async (
     url: RequestInfo, 
     options: RequestInit, 
@@ -95,7 +86,6 @@ const fetchWithRetry = async (
         try {
             const response = await fetch(url, options);
 
-            // If we get a rate limit error, wait and retry
             if (response.status === 429) {
                 if (attempt + 1 >= maxRetries) {
                     logger.warn(`API rate limit exceeded. All ${maxRetries} retries failed. Returning final error response to be handled by caller.`);
@@ -107,15 +97,12 @@ const fetchWithRetry = async (
                 attempt++;
                 continue;
             }
-
-            // For any other response (ok or not), return it immediately. The caller will handle it.
             return response;
 
         } catch (error) {
-            // This catches network errors. We should retry on these.
              if (attempt + 1 >= maxRetries) {
                 logger.error(`API request failed after ${maxRetries} attempts due to network errors.`, error);
-                throw error; // Rethrow the last error if all retries fail
+                throw error; 
             }
             const delay = initialDelay * Math.pow(2, attempt) + Math.random() * 1000;
             logger.warn(`Fetch failed due to a network error. Retrying in ${Math.round(delay / 1000)}s...`, error);
@@ -123,7 +110,6 @@ const fetchWithRetry = async (
             attempt++;
         }
     }
-    // This should not be reached if the loop is correct, but for typescript's sake.
     throw new Error(`API request failed to complete after ${maxRetries} attempts.`);
 };
 
@@ -143,8 +129,6 @@ const streamOpenAIChatResponse = async (
                 return { role, content };
             });
 
-        // Defensive merging: OpenAI-compatible APIs require strict user/assistant alternation.
-        // This prevents errors if the history accidentally contains two 'assistant' roles in a row.
         const mergedMessages = [];
         if (mappedMessages.length > 0) {
             mergedMessages.push(mappedMessages[0]);
@@ -152,16 +136,13 @@ const streamOpenAIChatResponse = async (
                 const prev = mergedMessages[mergedMessages.length - 1];
                 const curr = mappedMessages[i];
                 if (prev.role === curr.role) {
-                    prev.content += `\n\n${curr.content}`; // Merge content
+                    prev.content += `\n\n${curr.content}`; 
                 } else {
                     mergedMessages.push(curr);
                 }
             }
         }
         
-        // Final check for OpenAI compatibility: the last message must not be from the assistant.
-        // If it is, this is an AI-to-AI turn, and we coerce the last assistant message
-        // into a user message for the API to accept it.
         if (mergedMessages.length > 0 && mergedMessages[mergedMessages.length - 1].role === 'assistant') {
             if (mergedMessages.length > 1) {
                 mergedMessages[mergedMessages.length - 1].role = 'user';
@@ -372,9 +353,6 @@ const normalizeGeminiHistory = (history: Message[]) => {
         }
     }
     
-    // FINAL CHECK: The Gemini API requires a user message to respond to.
-    // If the last message is from the model, it means the user wants the AI to continue.
-    // We change its role to 'user' to make the request valid.
     if (merged.length > 0 && merged[merged.length - 1].role === 'model') {
         logger.debug("Last message was from model, changing role to user for API compatibility.");
         merged[merged.length - 1].role = 'user';
@@ -403,9 +381,7 @@ const streamGeminiChatResponse = async (
             return;
         }
 
-        // FIX: Changed type from AsyncGenerator to AsyncIterable to match the return type of `generateContentStream`.
         const responseStream: AsyncIterable<GenerateContentResponse> = await withRetry(() => ai.models.generateContentStream({
-            // FIX: Updated deprecated model 'gemini-1.5-flash' to 'gemini-2.5-flash'.
             model: 'gemini-2.5-flash',
             contents: contents,
             config: { systemInstruction: systemInstruction }
@@ -426,20 +402,49 @@ const generateGeminiImage = async (prompt: string, settings: { [key: string]: an
     const fullPrompt = buildImagePrompt(prompt, settings);
     logger.log("Generating Gemini image with full prompt:", { fullPrompt });
 
-    const response: GenerateImagesResponse = await withRetry(() => ai.models.generateImages({
-        model: 'imagen-4.0-generate-001',
-        prompt: fullPrompt,
-        config: {
-            numberOfImages: 1,
-            outputMimeType: 'image/png',
-            aspectRatio: '1:1',
-        },
-    }));
+    // Use gemini-2.5-flash-image for general image generation as default
+    try {
+        const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({
+            model: 'gemini-2.5-flash-image',
+            contents: {
+                parts: [{ text: fullPrompt }],
+            },
+            config: {
+                imageConfig: {
+                    aspectRatio: "1:1",
+                }
+            }
+        }));
 
-    if (response.generatedImages && response.generatedImages.length > 0) {
-        return `data:image/png;base64,${response.generatedImages[0].image.imageBytes}`;
+        const candidates = response.candidates;
+        if (!candidates || candidates.length === 0) {
+             throw new Error("No candidates returned from Gemini API.");
+        }
+
+        const parts = candidates[0].content?.parts || [];
+        
+        // Priority 1: Check for Image data
+        for (const part of parts) {
+            if (part.inlineData) {
+                const base64EncodeString: string = part.inlineData.data;
+                return `data:image/png;base64,${base64EncodeString}`;
+            }
+        }
+
+        // Priority 2: Check for refusal text if no image found
+        for (const part of parts) {
+            if (part.text) {
+                // Capture this as the error reason
+                throw new Error(`Model refused or failed to generate image. Response: ${part.text}`);
+            }
+        }
+        
+        throw new Error("No image data found in response.");
+
+    } catch (error) {
+        logger.error("Error generating image with gemini-2.5-flash-image:", error);
+        throw error;
     }
-    throw new Error("No image was generated by Gemini.");
 };
 
 
@@ -514,8 +519,6 @@ export const generateImageFromPrompt = async (prompt: string, settings?: { [key:
             if (!settings?.apiEndpoint) {
                 throw new Error("OpenAI-compatible API endpoint is not configured for the image generator plugin.");
             }
-            // The user provides the full, correct endpoint in the plugin settings.
-            // We no longer manipulate the URL here.
             return await generateOpenAIImage(prompt, settings);
         } else {
             logger.log("Using Gemini API for image generation.");
@@ -524,7 +527,6 @@ export const generateImageFromPrompt = async (prompt: string, settings?: { [key:
     } catch (error) {
         logger.error("Error in generateImageFromPrompt:", error);
         const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-        // Provide a more user-friendly error message.
         throw new Error(`Image generation failed. Please check the plugin settings (API key, endpoint) and logs. Details: ${errorMessage}`);
     }
 };
@@ -533,7 +535,6 @@ export const generateContent = async (prompt: string, apiKey?: string): Promise<
   try {
     const ai = getAiClient(apiKey);
     const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({
-        // FIX: Updated deprecated model 'gemini-1.5-pro' to 'gemini-2.5-flash'.
         model: 'gemini-2.5-flash',
         contents: prompt,
     }));
@@ -552,9 +553,7 @@ export const streamGenericResponse = async (
 ): Promise<void> => {
     try {
         const ai = getAiClient(apiKey);
-        // FIX: Changed type from AsyncGenerator to AsyncIterable to match the return type of `generateContentStream`.
         const responseStream: AsyncIterable<GenerateContentResponse> = await withRetry(() => ai.models.generateContentStream({
-            // FIX: Updated deprecated model 'gemini-1.5-pro' to 'gemini-2.5-flash'.
             model: 'gemini-2.5-flash',
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
             config: { systemInstruction: systemInstruction }

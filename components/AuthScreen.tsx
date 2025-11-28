@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
-import { LockIcon } from './icons/LockIcon.tsx';
-import { setMasterPassword } from '../services/secureStorage.ts';
+import { LockIcon } from './icons/LockIcon';
+import { setMasterPassword } from '../services/secureStorage';
 
 interface AuthScreenProps {
   isPasswordSet: boolean;

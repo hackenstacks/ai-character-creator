@@ -1,34 +1,34 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Character, ChatSession, AppData, Plugin, GeminiApiRequest, Message, CryptoKeys, RagSource, ConfirmationRequest, UISettings, Lorebook } from '../types.ts';
-import { loadData, saveData } from '../services/secureStorage.ts';
-import * as ragService from '../services/ragService.ts';
-import { CharacterList } from './CharacterList.tsx';
-import { ChatList } from './ChatList.tsx';
-import { CharacterForm } from './CharacterForm.tsx';
-import { ChatInterface } from './ChatInterface.tsx';
-import { PluginManager } from './PluginManager.tsx';
-import { LogViewer } from './LogViewer.tsx';
-import { HelpModal } from './HelpModal.tsx';
-import { LorebookManager } from './LorebookManager.tsx';
-import { ChatSelectionModal } from './ChatSelectionModal.tsx';
-import { ConfirmationModal } from './ConfirmationModal.tsx';
-import { ThemeSwitcher } from './ThemeSwitcher.tsx';
-import { AppearanceModal } from './AppearanceModal.tsx';
-import { PluginSandbox } from '../services/pluginSandbox.ts';
-import * as geminiService from '../services/geminiService.ts';
-import * as compatibilityService from '../services/compatibilityService.ts';
-import * as cryptoService from '../services/cryptoService.ts';
-import { logger } from '../services/loggingService.ts';
-import { DownloadIcon } from './icons/DownloadIcon.tsx';
-import { UploadIcon } from './icons/UploadIcon.tsx';
-import { CodeIcon } from './icons/CodeIcon.tsx';
-import { TerminalIcon } from './icons/TerminalIcon.tsx';
-import { HelpIcon } from './icons/HelpIcon.tsx';
-import { PlusIcon } from './icons/PlusIcon.tsx';
-import { ChatBubbleIcon } from './icons/ChatBubbleIcon.tsx';
-import { UsersIcon } from './icons/UsersIcon.tsx';
-import { PaletteIcon } from './icons/PaletteIcon.tsx';
-import { GlobeIcon } from './icons/GlobeIcon.tsx';
+import { Character, ChatSession, AppData, Plugin, GeminiApiRequest, Message, CryptoKeys, RagSource, ConfirmationRequest, UISettings, Lorebook } from '../types';
+import { loadData, saveData } from '../services/secureStorage';
+import * as ragService from '../services/ragService';
+import { CharacterList } from './CharacterList';
+import { ChatList } from './ChatList';
+import { CharacterForm } from './CharacterForm';
+import { ChatInterface } from './ChatInterface';
+import { PluginManager } from './PluginManager';
+import { LogViewer } from './LogViewer';
+import { HelpModal } from './HelpModal';
+import { LorebookManager } from './LorebookManager';
+import { ChatSelectionModal } from './ChatSelectionModal';
+import { ConfirmationModal } from './ConfirmationModal';
+import { ThemeSwitcher } from './ThemeSwitcher';
+import { AppearanceModal } from './AppearanceModal';
+import { PluginSandbox } from '../services/pluginSandbox';
+import * as geminiService from '../services/geminiService';
+import * as compatibilityService from '../services/compatibilityService';
+import * as cryptoService from '../services/cryptoService';
+import { logger } from '../services/loggingService';
+import { DownloadIcon } from './icons/DownloadIcon';
+import { UploadIcon } from './icons/UploadIcon';
+import { CodeIcon } from './icons/CodeIcon';
+import { TerminalIcon } from './icons/TerminalIcon';
+import { HelpIcon } from './icons/HelpIcon';
+import { PlusIcon } from './icons/PlusIcon';
+import { ChatBubbleIcon } from './icons/ChatBubbleIcon';
+import { UsersIcon } from './icons/UsersIcon';
+import { PaletteIcon } from './icons/PaletteIcon';
+import { GlobeIcon } from './icons/GlobeIcon';
 
 
 const defaultImagePlugin: Plugin = {
@@ -143,76 +143,81 @@ export const MainLayout: React.FC = () => {
     useEffect(() => {
         const loadInitialData = async () => {
             logger.log("Loading initial application data...");
-            const data = await loadData();
-            let dataNeedsSave = false;
-            
-            // --- Key Generation and Migration ---
-            if (!data.userKeys) {
-                logger.log("User signing keys not found. Generating new master key pair.");
-                const keyPair = await cryptoService.generateSigningKeyPair();
-                data.userKeys = {
-                    publicKey: await cryptoService.exportKey(keyPair.publicKey),
-                    privateKey: await cryptoService.exportKey(keyPair.privateKey),
-                };
-                dataNeedsSave = true;
-                logger.log("New user master key pair generated.");
-            }
-            
-            // --- UI Settings Migration (from global to per-chat) ---
-            const dataAsAny = data as any;
-            if (dataAsAny.uiSettings && Object.keys(dataAsAny.uiSettings).length > 0) {
-                logger.log("Migrating global UI settings to chat sessions...");
-                const globalSettings = dataAsAny.uiSettings;
-                delete dataAsAny.uiSettings;
-
-                data.chatSessions = data.chatSessions.map(cs => {
-                    if (!cs.uiSettings) {
-                        return { ...cs, uiSettings: globalSettings };
-                    }
-                    return cs;
-                });
+            try {
+                const data = await loadData();
+                let dataNeedsSave = false;
                 
-                logger.log(`Applied global UI settings to relevant chat sessions.`);
-                dataNeedsSave = true;
-            }
-
-            const defaultPlugins = [defaultImagePlugin, defaultTtsPlugin];
-            if (!data.plugins) data.plugins = [];
-
-            defaultPlugins.forEach(defaultPlugin => {
-                let hasPlugin = data.plugins!.some(p => p.id === defaultPlugin.id);
-                if (!hasPlugin) {
-                    data.plugins!.push(defaultPlugin);
-                    logger.log(`Default plugin injected: ${defaultPlugin.name}`);
+                // --- Key Generation and Migration ---
+                if (!data.userKeys) {
+                    logger.log("User signing keys not found. Generating new master key pair.");
+                    const keyPair = await cryptoService.generateSigningKeyPair();
+                    data.userKeys = {
+                        publicKey: await cryptoService.exportKey(keyPair.publicKey),
+                        privateKey: await cryptoService.exportKey(keyPair.privateKey),
+                    };
                     dataNeedsSave = true;
-                } else {
-                    // Ensure settings exist on existing default plugins
-                    data.plugins = data.plugins!.map(p => {
-                        if (p.id === defaultPlugin.id && !p.settings) {
-                            dataNeedsSave = true;
-                            return { ...p, settings: defaultPlugin.settings };
+                    logger.log("New user master key pair generated.");
+                }
+                
+                // --- UI Settings Migration (from global to per-chat) ---
+                const dataAsAny = data as any;
+                if (dataAsAny.uiSettings && Object.keys(dataAsAny.uiSettings).length > 0) {
+                    logger.log("Migrating global UI settings to chat sessions...");
+                    const globalSettings = dataAsAny.uiSettings;
+                    delete dataAsAny.uiSettings;
+
+                    data.chatSessions = data.chatSessions.map(cs => {
+                        if (!cs.uiSettings) {
+                            return { ...cs, uiSettings: globalSettings };
                         }
-                        return p;
+                        return cs;
                     });
+                    
+                    logger.log(`Applied global UI settings to relevant chat sessions.`);
+                    dataNeedsSave = true;
                 }
-            });
+
+                const defaultPlugins = [defaultImagePlugin, defaultTtsPlugin];
+                if (!data.plugins) data.plugins = [];
+
+                defaultPlugins.forEach(defaultPlugin => {
+                    let hasPlugin = data.plugins!.some(p => p.id === defaultPlugin.id);
+                    if (!hasPlugin) {
+                        data.plugins!.push(defaultPlugin);
+                        logger.log(`Default plugin injected: ${defaultPlugin.name}`);
+                        dataNeedsSave = true;
+                    } else {
+                        // Ensure settings exist on existing default plugins
+                        data.plugins = data.plugins!.map(p => {
+                            if (p.id === defaultPlugin.id && !p.settings) {
+                                dataNeedsSave = true;
+                                return { ...p, settings: defaultPlugin.settings };
+                            }
+                            return p;
+                        });
+                    }
+                });
 
 
-            if (dataNeedsSave) {
-                await persistData(data);
-                logger.log("Initial data modifications saved.");
-            }
-            
-            setAppData(data);
-            if (data.chatSessions.length > 0) {
-                setSelectedChatId(data.chatSessions.find(cs => !cs.isArchived)?.id || data.chatSessions[0].id);
-                setActiveView('chat');
-            } else {
-                if (data.characters.length > 0) {
-                    setActivePanel('characters');
+                if (dataNeedsSave) {
+                    await persistData(data);
+                    logger.log("Initial data modifications saved.");
                 }
+                
+                setAppData(data);
+                if (data.chatSessions.length > 0) {
+                    setSelectedChatId(data.chatSessions.find(cs => !cs.isArchived)?.id || data.chatSessions[0].id);
+                    setActiveView('chat');
+                } else {
+                    if (data.characters.length > 0) {
+                        setActivePanel('characters');
+                    }
+                }
+                logger.log("Application data loaded successfully.", { characters: data.characters.length, sessions: data.chatSessions.length, plugins: data.plugins.length, lorebooks: data.lorebooks?.length || 0 });
+            } catch (error) {
+                logger.error("Failed to load initial data. Data might be corrupt or key is invalid.", error);
+                alert("Critical error loading data. Please check logs. You may need to clear your site data if the database is corrupt.");
             }
-            logger.log("Application data loaded successfully.", { characters: data.characters.length, sessions: data.chatSessions.length, plugins: data.plugins.length, lorebooks: data.lorebooks?.length || 0 });
         };
         loadInitialData();
 
@@ -584,13 +589,19 @@ export const MainLayout: React.FC = () => {
             try {
                 const text = e.target?.result as string;
                 if (!text) throw new Error("File content is empty.");
-                const data = JSON.parse(text);
+                
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (parseError) {
+                    throw new Error("Invalid JSON file format.");
+                }
 
-                const isValidAppData = (d: any): d is AppData => (
-                    typeof d === 'object' && d !== null &&
+                const isValidAppData = (d: any): d is AppData => {
+                    return typeof d === 'object' && d !== null &&
                     Array.isArray(d.characters) &&
-                    Array.isArray(d.chatSessions)
-                );
+                    Array.isArray(d.chatSessions);
+                };
                 
                 // --- Type Identification Logic ---
 
@@ -650,6 +661,7 @@ export const MainLayout: React.FC = () => {
                 }
                 
                 // 4. Legacy Backup (checked after specific formats)
+                // Also check for 'characters' key specifically to be lenient with legacy exports
                 if (isValidAppData(data)) {
                     logger.log("Detected legacy backup format.");
                     setConfirmationRequest({
@@ -677,7 +689,9 @@ export const MainLayout: React.FC = () => {
                     return;
                 }
                 
-                throw new Error("Unrecognized file format. Not a valid character, lorebook, chat, or backup file.");
+                // Diagnostic logging for failure
+                logger.error("File recognition failed. Keys present:", Object.keys(data));
+                throw new Error("Unrecognized file format. Not a valid character, lorebook, chat, or backup file. See logs for debug info.");
 
             } catch (error) {
                 logger.error("Import failed during processing:", error);

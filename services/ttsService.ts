@@ -72,7 +72,12 @@ const processUtteranceQueue = () => {
         cancel();
     };
 
-    window.speechSynthesis.speak(utterance);
+    try {
+        window.speechSynthesis.speak(utterance);
+    } catch (e) {
+        logger.error("Failed to call speechSynthesis.speak", e);
+        cancel();
+    }
 };
 
 export const speak = async (text: string, voiceURI?: string) => {
@@ -83,6 +88,9 @@ export const speak = async (text: string, voiceURI?: string) => {
 
     try {
         const availableVoices = await getVoices();
+        // If voices aren't loaded yet, try to use default, or wait a beat? 
+        // For now, we proceed. speak() call might be queued by browser.
+        
         const selectedVoice = voiceURI ? availableVoices.find(v => v.voiceURI === voiceURI) : undefined;
         if (voiceURI && !selectedVoice) {
             logger.warn(`TTS voice not found for URI: ${voiceURI}. Using default.`);

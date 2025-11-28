@@ -104,18 +104,25 @@ export const nexusToV2 = async (character: Character): Promise<any> => {
  * It can also auto-detect narrator/scenario bots and parse their content into a Lorebook.
  */
 export const v2ToNexus = (card: any): { character: Character, lorebook?: Lorebook } | null => {
-    const isV2Spec = card.spec === 'chara_card_v2' || card.spec === 'chara_card_v2.0';
+    // If card is null or undefined, return null
+    if (!card) return null;
+
+    // Handle different structures: { spec: ..., data: ... } or just { name: ... }
     const data = card.data || card; 
     
+    // Basic validation: must have a name
     if (!data || !data.name) {
         return null; 
     }
 
+    // Check if it's actually a chat session (avoid false positives)
     if (Array.isArray(data.characterIds) && Array.isArray(data.messages)) {
         logger.debug(`File identified as Chat Session, not a character card. Skipping v2ToNexus.`);
         return null;
     }
 
+    // Check compatibility markers
+    const isV2Spec = card.spec === 'chara_card_v2' || card.spec === 'chara_card_v2.0';
     const hasCharFields = data.description !== undefined || 
                           data.personality !== undefined || 
                           data.char_persona !== undefined || 
@@ -126,17 +133,21 @@ export const v2ToNexus = (card: any): { character: Character, lorebook?: Loreboo
         return null;
     }
 
+    // 1. Try to use _aiNexusData for perfect fidelity
     if (data._aiNexusData) {
         logger.log(`Importing character "${data.name}" using _aiNexusData block.`);
         const nexusData = data._aiNexusData;
+        
+        // Ensure ID is unique or generate new one to prevent collisions
         const character: Character = {
             ...nexusData,
             id: crypto.randomUUID(),
-            keys: undefined,
+            keys: undefined, // Strip private keys on import if they exist (shouldn't be exported anyway)
         };
         return { character };
     }
 
+    // 2. Standard V2 Import
     logger.log(`Importing standard character card: ${data.name}`);
     
     const avatarUrl = data.avatar?.startsWith('http') ? data.avatar : (data.avatar ? `data:image/png;base64,${data.avatar}` : '');
@@ -214,23 +225,25 @@ export const v2ToNexus = (card: any): { character: Character, lorebook?: Loreboo
 export const sillyTavernWorldInfoToNexus = (data: any, fileName: string): Omit<Lorebook, 'id'> | null => {
     // Handle both the object-based and array-based formats
     let entriesData: any[] = [];
-    if (data && typeof data === 'object' && !Array.isArray(data)) {
-        if (data.entries && typeof data.entries === 'object') {
-            entriesData = Object.values(data.entries);
-        } else if (Array.isArray(data.entries)) {
-            entriesData = data.entries;
+    
+    // Check if it's potentially a ST world info file
+    if (data && typeof data === 'object') {
+        if (Array.isArray(data)) {
+            entriesData = data;
+        } else if (data.entries && typeof data.entries === 'object') {
+            entriesData = Array.isArray(data.entries) ? data.entries : Object.values(data.entries);
         }
-    } else if (Array.isArray(data)) {
-        entriesData = data;
     }
 
     if (entriesData.length === 0) return null;
     
+    // Basic validation of the first entry to confirm format
     const firstEntry = entriesData[0];
-    const isWorldInfo = typeof firstEntry === 'object' && Array.isArray(firstEntry.key) && typeof firstEntry.content === 'string';
-    const isAgnaistic = typeof firstEntry === 'object' && Array.isArray(firstEntry.keys) && typeof firstEntry.content === 'string';
+    const isWorldInfo = firstEntry && typeof firstEntry === 'object' && 
+                        (Array.isArray(firstEntry.key) || Array.isArray(firstEntry.keys)) && 
+                        typeof firstEntry.content === 'string';
     
-    if (!isWorldInfo && !isAgnaistic) {
+    if (!isWorldInfo) {
         return null;
     }
 

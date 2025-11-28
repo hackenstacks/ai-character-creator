@@ -1,5 +1,5 @@
-import { GeminiApiRequest, PluginApiResponse } from "../types.ts";
-import { logger } from "./loggingService.ts";
+import { GeminiApiRequest, PluginApiResponse } from "../types";
+import { logger } from "./loggingService";
 
 // This string contains the code that will be executed inside the Web Worker.
 // It creates a sandboxed environment for the plugin code.
@@ -21,6 +21,11 @@ const workerCode = `
           console.error('Invalid callback provided for hook:', hookName);
         }
       },
+    },
+    // Compatibility Shim for legacy character scripts
+    beforeResponseGenerate: (payload) => {
+        console.warn('Deprecated: nexus.beforeResponseGenerate() called. Use nexus.hooks.register("beforeResponseGenerate", ...) instead.');
+        return payload;
     },
     // Provides a secure bridge to the main application's Gemini API services.
     gemini: {
@@ -66,6 +71,7 @@ const workerCode = `
             self.postMessage({ type: 'HOOK_ERROR', ticket: payload.ticket, error: error.message });
           }
         } else {
+          // If no hook is registered, return original data (passthrough)
           self.postMessage({ type: 'HOOK_RESULT', ticket: payload.ticket, result: payload.data });
         }
         break;

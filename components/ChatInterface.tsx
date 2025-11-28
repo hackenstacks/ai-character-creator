@@ -526,7 +526,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             ? { type: 'summary', value: prompt }
             : { type: 'direct', value: prompt };
             
-        const result = await onTriggerHook<{type: string, value: string}, {url?: string, error?: string}>('generateImage', payload);
+        // Use type assertion instead of explicit generic arguments to avoid parser issues
+        const result = await onTriggerHook('generateImage', payload) as {url?: string, error?: string};
 
         if (result.url) {
             updateSession(curr => {
@@ -555,7 +556,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const handleGenerateImageInWindow = useCallback(async (prompt: string) => {
     logger.log("Generating image in floating window for prompt:", prompt);
     const payload = { type: 'direct', value: prompt };
-    const result = await onTriggerHook<{type: string, value: string}, {url?: string, error?: string}>('generateImage', payload);
+    // Use type assertion instead of explicit generic arguments to avoid parser issues
+    const result = await onTriggerHook('generateImage', payload) as {url?: string, error?: string};
     return result;
   }, [onTriggerHook]);
   
