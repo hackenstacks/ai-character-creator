@@ -23,7 +23,7 @@ const notifyListeners = () => {
 
 export const subscribe = (listener: ThemeListener): (() => void) => {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  return () => { listeners.delete(listener); };
 };
 
 // --- Theme Management ---
