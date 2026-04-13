@@ -137,7 +137,7 @@ export interface VaultItem {
   content?: string; // Base64 string or JSON string
   size?: number;
   createdAt: string;
-  isLocked?: boolean; // If true, requires specific password to open (simulated)
+  isLocked?: boolean; // If true, requires specific password to open
 }
 
 export interface AppData {
