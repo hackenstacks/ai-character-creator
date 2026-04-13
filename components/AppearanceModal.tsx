@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { UISettings, ChatSession, Character } from '../types';
 import { generateContent } from '../services/geminiService';
@@ -7,6 +8,7 @@ import { UploadIcon } from './icons/UploadIcon.tsx';
 import { SparklesIcon } from './icons/SparklesIcon.tsx';
 import { TrashIcon } from './icons/TrashIcon.tsx';
 import * as themeService from '../services/themeService.ts';
+import { InputModal } from './InputModal.tsx';
 
 interface AppearanceModalProps {
   settings: UISettings;
@@ -20,7 +22,7 @@ interface AppearanceModalProps {
 const ImageControl: React.FC<{
   label: string;
   imageUrl?: string;
-  onUpload: (file: File) => void;
+  onUpload: (file: File) => void | Promise<void>;
   onGenerate: (type: 'prompt' | 'auto' | 'character') => void;
   onClear: () => void;
   isGenerating: boolean;
@@ -29,14 +31,14 @@ const ImageControl: React.FC<{
 }> = ({ label, imageUrl, onUpload, onGenerate, onClear, isGenerating, canAutoGenerate, canCharacterGenerate }) => {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     if (file.size > 4 * 1024 * 1024) { // 4MB limit
       alert("File is too large. Please select an image under 4MB.");
       return;
     }
-    onUpload(file);
+    await onUpload(file);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -72,6 +74,7 @@ export const AppearanceModal: React.FC<AppearanceModalProps> = ({ settings, curr
   const [isGeneratingBg, setIsGeneratingBg] = useState(false);
   const [isGeneratingBanner, setIsGeneratingBanner] = useState(false);
   const [activeTheme, setActiveTheme] = useState(themeService.getTheme());
+  const [inputModal, setInputModal] = useState<{ title: string, label: string, onConfirm: (val: string) => void } | null>(null);
 
   useEffect(() => {
     const unsubscribe = themeService.subscribe(() => {
@@ -88,27 +91,55 @@ export const AppearanceModal: React.FC<AppearanceModalProps> = ({ settings, curr
   const canAutoGenerate = !!currentChat && currentChat.messages.length >= 2;
   const canCharacterGenerate = participants.length > 0;
 
-  const handleFileUpload = (file: File, type: 'background' | 'banner') => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const newSettings = { ...settings };
-      if (type === 'background') newSettings.backgroundImage = reader.result as string;
-      if (type === 'banner') newSettings.bannerImage = reader.result as string;
-      onUpdate(newSettings);
-    };
-    reader.readAsDataURL(file);
+  const handleFileUpload = (file: File, type: 'background' | 'banner'): Promise<void> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const newSettings = { ...settings };
+          if (type === 'background') newSettings.backgroundImage = reader.result as string;
+          if (type === 'banner') newSettings.bannerImage = reader.result as string;
+          onUpdate(newSettings);
+          resolve();
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+    });
   };
 
   const handleGenerate = async (type: 'background' | 'banner', mode: 'prompt' | 'auto' | 'character') => {
     const setIsGenerating = type === 'background' ? setIsGeneratingBg : setIsGeneratingBanner;
     
-    let promptText: string | null = null;
+    if (mode === 'prompt') {
+        setInputModal({
+            title: `Generate ${type === 'background' ? 'Background' : 'Banner'}`,
+            label: "Enter an image prompt:",
+            onConfirm: async (prompt) => {
+                setInputModal(null);
+                setIsGenerating(true);
+                try {
+                    const imageUrl = await onGenerateImage(prompt);
+                    if (imageUrl) {
+                        const newSettings = { ...settings };
+                        if (type === 'background') newSettings.backgroundImage = imageUrl;
+                        if (type === 'banner') newSettings.bannerImage = imageUrl;
+                        onUpdate(newSettings);
+                    }
+                } catch (err) {
+                    logger.error("Failed to generate image", err);
+                    alert(`Could not generate image: ${err instanceof Error ? err.message : String(err)}`);
+                } finally {
+                    setIsGenerating(false);
+                }
+            }
+        });
+        return;
+    }
+
     setIsGenerating(true);
+    let promptText: string | null = null;
 
     try {
-        if (mode === 'prompt') {
-            promptText = window.prompt(`Enter a prompt for the ${type} image:`);
-        } else if (mode === 'auto') {
+        if (mode === 'auto') {
             if (!canAutoGenerate) throw new Error("Not enough chat history to auto-generate an image.");
             const context = currentChat.messages.slice(-5).map(m => m.content).join('\n');
             const summaryPrompt = `Based on the following conversation, create a short, visually descriptive prompt for an atmospheric ${type} image. The prompt should capture the essence of the scene. Be creative and concise. Conversation:\n\n${context}`;
@@ -129,17 +160,14 @@ export const AppearanceModal: React.FC<AppearanceModalProps> = ({ settings, curr
             logger.log(`Auto-generated image prompt from character details:`, promptText);
         }
 
-        if (!promptText) {
-          setIsGenerating(false);
-          return;
-        }
-
-        const imageUrl = await onGenerateImage(promptText);
-        if (imageUrl) {
-          const newSettings = { ...settings };
-          if (type === 'background') newSettings.backgroundImage = imageUrl;
-          if (type === 'banner') newSettings.bannerImage = imageUrl;
-          onUpdate(newSettings);
+        if (promptText) {
+            const imageUrl = await onGenerateImage(promptText);
+            if (imageUrl) {
+                const newSettings = { ...settings };
+                if (type === 'background') newSettings.backgroundImage = imageUrl;
+                if (type === 'banner') newSettings.bannerImage = imageUrl;
+                onUpdate(newSettings);
+            }
         }
     } catch (err) {
         const message = err instanceof Error ? err.message : "An unknown error occurred.";
@@ -231,6 +259,14 @@ export const AppearanceModal: React.FC<AppearanceModalProps> = ({ settings, curr
             <button onClick={onClose} className="py-2 px-4 rounded-md text-text-primary bg-background-tertiary hover:bg-opacity-80">Close</button>
         </footer>
       </div>
+      {inputModal && (
+        <InputModal 
+            title={inputModal.title}
+            label={inputModal.label}
+            onConfirm={inputModal.onConfirm}
+            onCancel={() => setInputModal(null)}
+        />
+      )}
     </div>
   );
 };

@@ -1,662 +1,583 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Character, ApiConfig, EmbeddingConfig, RagSource } from '../types.ts';
-import * as ttsService from '../services/ttsService.ts';
-import * as ragService from '../services/ragService.ts';
-import { logger } from '../services/loggingService.ts';
-import { TrashIcon } from './icons/TrashIcon.tsx';
-import { UploadIcon } from './icons/UploadIcon.tsx';
-import { SparklesIcon } from './icons/SparklesIcon.tsx';
-import { SpinnerIcon } from './icons/SpinnerIcon.tsx';
+
+import React, { useState, useRef, useEffect } from 'react';
+import { Character, RagSource, ApiConfig } from '../types';
+import { logger } from '../services/loggingService';
+import * as ragService from '../services/ragService';
+import * as geminiService from '../services/geminiService';
+import { PlusIcon } from './icons/PlusIcon';
+import { TrashIcon } from './icons/TrashIcon';
+import { UploadIcon } from './icons/UploadIcon';
+import { ImageIcon } from './icons/ImageIcon';
+import { SpinnerIcon } from './icons/SpinnerIcon';
+import { SparklesIcon } from './icons/SparklesIcon';
+import { CogIcon } from './icons/CogIcon';
+import { VaultIcon } from './icons/VaultIcon';
 
 interface CharacterFormProps {
-  character: Character | null;
-  onSave: (character: Character) => void;
-  onCancel: () => void;
-  onDeleteRagSource: (characterId: string, sourceId: string) => Promise<void>;
-  onGenerateImage: (prompt: string) => Promise<string | null>;
+    character: Character | null;
+    onSave: (character: Character) => void;
+    onCancel: () => void;
+    onDeleteRagSource: (characterId: string, sourceId: string) => void;
+    onGenerateImage: (prompt: string) => Promise<string | null>;
+    onOpenVaultSelection: (onConfirm: (ids: string[]) => void) => void; // Callback to open vault in selection mode
 }
 
-const defaultApiConfig: ApiConfig = {
-    service: 'default',
-    apiKey: '',
-    apiEndpoint: '',
-    model: ''
-};
-
-const defaultEmbeddingConfig: EmbeddingConfig = {
-    service: 'gemini',
-    apiKey: '',
-    apiEndpoint: 'http://localhost:11434/api/embeddings',
-    model: 'nomic-embed-text'
-};
-
-const examplePluginCode = `// This code runs in a secure sandbox right before this character generates a response.
-// You can use it to dynamically alter their behavior.
-// The 'nexus' object provides logging and access to hooks.
-
-nexus.hooks.register('beforeResponseGenerate', (payload) => {
-  // The payload contains the data for the upcoming API call.
-  // payload: { history: Message[], systemOverride?: string }
-  
-  nexus.log('Character plugin is running...');
-
-  // Example: Make the character always respond in a pirate accent.
-  const pirateInstruction = 'For this response, you must speak like a pirate.';
-  
-  if (payload.systemOverride) {
-    // If an override already exists (e.g., from a /sys command), append to it.
-    payload.systemOverride += \`\\n\${pirateInstruction}\`;
-  } else {
-    payload.systemOverride = pirateInstruction;
-  }
-  
-  // You must return the modified payload object.
-  return payload;
-});
-`;
-
-const Section: React.FC<{ title: string, children: React.ReactNode, defaultOpen?: boolean }> = ({ title, children, defaultOpen = true }) => {
-    const [isOpen, setIsOpen] = useState(defaultOpen);
-    return (
-        <div className="rounded-md border border-border-neutral bg-background-secondary/50">
-            <button type="button" onClick={() => setIsOpen(!isOpen)} className="w-full text-left p-4 flex justify-between items-center">
-                <h3 className="text-lg font-medium text-text-primary">{title}</h3>
-                <svg className={`w-5 h-5 text-text-secondary transform transition-transform ${isOpen ? 'rotate-180' : ''}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
-            </button>
-            {isOpen && <div className="p-4 border-t border-border-neutral space-y-4">{children}</div>}
-        </div>
-    );
-}
-
-export const CharacterForm: React.FC<CharacterFormProps> = ({ character, onSave, onCancel, onDeleteRagSource, onGenerateImage }) => {
-  const [formState, setFormState] = useState<Character>({} as Character);
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [indexingStatus, setIndexingStatus] = useState<string | null>(null);
-  const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
-  
-  const ragFileInputRef = useRef<HTMLInputElement>(null);
-  const avatarFileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (ttsService.isSupported()) {
-        ttsService.getVoices().then(availableVoices => {
-            if (availableVoices.length > 0) {
-                setVoices(availableVoices);
-            }
-        });
-    }
-  }, []);
-
-  useEffect(() => {
-    if (character) {
-        setFormState({
-            ...character,
-            tags: character.tags || [],
-            lore: character.lore || [],
-            memory: character.memory || 'No memories yet.',
-            characterType: character.characterType || 'character',
-            ragSources: character.ragSources || [],
-            embeddingConfig: character.embeddingConfig || defaultEmbeddingConfig,
-            apiConfig: character.apiConfig || defaultApiConfig,
-            pluginEnabled: character.pluginEnabled || false,
-            pluginCode: character.pluginCode || '',
-        });
-    } else {
-        setFormState({
-            id: '', // Will be set on save
-            name: '',
-            description: '',
-            personality: '',
-            avatarUrl: '',
-            tags: [],
-            createdAt: '', // Will be set on save
-            physicalAppearance: '',
-            personalityTraits: '',
-            lore: [],
-            memory: 'No memories yet.',
-            voiceURI: '',
-            characterType: 'character',
-            apiConfig: defaultApiConfig,
-            ragEnabled: false,
-            embeddingConfig: defaultEmbeddingConfig,
-            ragSources: [],
-            pluginEnabled: false,
-            pluginCode: examplePluginCode,
-        });
-    }
-  }, [character]);
-
-  const handleFormChange = <K extends keyof Character>(key: K, value: Character[K]) => {
-      setFormState(prev => ({ ...prev, [key]: value }));
-  };
-  
-  const handleApiConfigChange = <K extends keyof ApiConfig>(key: K, value: ApiConfig[K]) => {
-      setFormState(prev => ({ ...prev, apiConfig: { ...prev.apiConfig!, [key]: value }}));
-  };
-  
-  const handleEmbeddingConfigChange = <K extends keyof EmbeddingConfig>(key: K, value: EmbeddingConfig[K]) => {
-      setFormState(prev => ({ ...prev, embeddingConfig: { ...prev.embeddingConfig!, [key]: value }}));
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formState.name.trim()) return;
-
-    const characterToSave: Character = {
-      ...formState,
-      id: character?.id || crypto.randomUUID(),
-      createdAt: character?.createdAt || new Date().toISOString(),
-      apiConfig: {
-        ...formState.apiConfig,
-        apiKey: formState.apiConfig?.apiKey?.trim(),
-        apiEndpoint: formState.apiConfig?.apiEndpoint?.trim(),
-        model: formState.apiConfig?.model?.trim(),
-      },
-       embeddingConfig: {
-        ...formState.embeddingConfig,
-        apiKey: formState.embeddingConfig?.apiKey?.trim(),
-        apiEndpoint: formState.embeddingConfig?.apiEndpoint?.trim(),
-        model: formState.embeddingConfig?.model?.trim(),
-      }
-    };
-    onSave(characterToSave);
-  };
-  
-  const handleRagFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const file = event.target.files?.[0];
-      if (!file || !character) return;
-      
-      try {
-        setIndexingStatus(`Processing "${file.name}"...`);
-        const newSource = await ragService.processAndIndexFile(file, character, (progress) => {
-            setIndexingStatus(progress);
-        });
-
-        const updatedCharacter = {
-            ...formState,
-            ragSources: [...(formState.ragSources || []), newSource]
-        };
-        setFormState(updatedCharacter);
-        onSave(updatedCharacter); // Persist the new source
-        setIndexingStatus(`Successfully indexed "${file.name}"!`);
-      } catch (error) {
-        logger.error("File indexing failed:", error);
-        setIndexingStatus(`Error indexing "${file.name}": ${error instanceof Error ? error.message : "Unknown error"}`);
-      } finally {
-        if(ragFileInputRef.current) ragFileInputRef.current.value = "";
-        setTimeout(() => setIndexingStatus(null), 5000);
-      }
-  };
-
-  const handleAvatarFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    if (file.size > 2 * 1024 * 1024) { // 2MB limit
-      alert("File is too large. Please select an image under 2MB.");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      handleFormChange('avatarUrl', reader.result as string);
-    };
-    reader.onerror = (error) => {
-        logger.error("Failed to read avatar file:", error);
-        alert("Failed to read file.");
-    };
-    reader.readAsDataURL(file);
-    if(avatarFileInputRef.current) avatarFileInputRef.current.value = "";
-  };
-
-  const generateAvatar = async (prompt: string) => {
-    setIsGeneratingAvatar(true);
-    try {
-        const imageUrl = await onGenerateImage(prompt);
-        if (imageUrl) {
-            handleFormChange('avatarUrl', imageUrl);
+export const CharacterForm: React.FC<CharacterFormProps> = ({ character, onSave, onCancel, onDeleteRagSource, onGenerateImage, onOpenVaultSelection }) => {
+    const [formState, setFormState] = useState<Character>(character || {
+        id: crypto.randomUUID(),
+        name: '',
+        description: '',
+        personality: '',
+        backstory: '',
+        firstMessage: '',
+        avatarUrl: '',
+        tags: [],
+        createdAt: new Date().toISOString(),
+        characterType: 'character',
+        ragEnabled: false,
+        useSearchGrounding: false,
+        thinkingBudget: 0,
+        embeddingConfig: { service: 'gemini' },
+        vaultAttachmentIds: []
+    });
+    
+    // Ensure embedding config is initialized even if loading an old character
+    useEffect(() => {
+        if (character && !character.embeddingConfig) {
+            setFormState(prev => ({
+                ...prev,
+                embeddingConfig: { service: 'gemini' }
+            }));
         }
-    } finally {
-        setIsGeneratingAvatar(false);
-    }
-  };
+    }, [character]);
+    
+    const [indexingStatus, setIndexingStatus] = useState<string | null>(null);
+    const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
+    const [isGeneratingText, setIsGeneratingText] = useState<string | null>(null); // 'description' | 'personality' etc
+    const [activeTab, setActiveTab] = useState<'basic' | 'details' | 'advanced' | 'memory'>('basic');
+    
+    const ragFileInputRef = useRef<HTMLInputElement>(null);
+    const avatarInputRef = useRef<HTMLInputElement>(null);
 
-  const handleGenerateFromPrompt = () => {
-    const prompt = window.prompt("Enter a prompt for the new avatar:");
-    if (prompt) {
-        generateAvatar(prompt);
-    }
-  };
+    useEffect(() => {
+        if (character) {
+            setFormState(character);
+        }
+    }, [character]);
 
-  const handleGenerateFromDescription = () => {
-    if (formState.physicalAppearance?.trim()) {
-        generateAvatar(formState.physicalAppearance);
-    }
-  };
+    const handleChange = (field: keyof Character, value: any) => {
+        setFormState(prev => ({ ...prev, [field]: value }));
+    };
 
-  return (
-    <div className="flex-1 flex flex-col bg-background-primary h-full">
-      <header className="flex items-center p-4 border-b border-border-neutral flex-shrink-0">
-          <h2 className="text-xl font-bold text-text-primary">
-            {character ? 'Edit Character' : 'Create New Character'}
-          </h2>
-      </header>
-      <div className="flex-1 overflow-y-auto p-4 md:p-8">
-        <form onSubmit={handleSubmit} className="space-y-6 max-w-4xl mx-auto">
+    const handleNestedChange = (parent: keyof Character, key: string, value: any) => {
+        setFormState(prev => ({
+            ...prev,
+            [parent]: {
+                ...(prev[parent] as object),
+                [key]: value
+            }
+        }));
+    };
 
-            <Section title="Core Identity">
-                <div>
-                  <label htmlFor="name" className="block text-sm font-medium text-text-primary">Name</label>
-                  <input
-                    id="name"
-                    type="text"
-                    value={formState.name || ''}
-                    onChange={(e) => handleFormChange('name', e.target.value)}
-                    required
-                    className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md shadow-sm py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="characterType" className="block text-sm font-medium text-text-primary">Character Type</label>
-                  <select
-                    id="characterType"
-                    value={formState.characterType || 'character'}
-                    onChange={(e) => handleFormChange('characterType', e.target.value as 'character' | 'narrator')}
-                    className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md shadow-sm py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                  >
-                    <option value="character">Persona</option>
-                    <option value="narrator">Narrator / Scenario</option>
-                  </select>
-                  <p className="text-xs text-text-secondary mt-1">
-                    'Persona' is for a standard interactive character. 'Narrator/Scenario' is for world-building bots that set the scene or act as a game master.
-                  </p>
-                </div>
-                 <div>
-                  <label className="block text-sm font-medium text-text-primary">Avatar</label>
-                  <div className="mt-2 flex items-center space-x-6">
-                     <div className="relative flex-shrink-0">
-                        <img
-                            src={formState.avatarUrl || 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='}
-                            alt="Avatar Preview"
-                            className="w-24 h-24 rounded-full object-cover bg-background-tertiary border border-border-neutral"
-                        />
-                        {isGeneratingAvatar && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-full">
-                                <SpinnerIcon className="animate-spin h-8 w-8 text-white" />
-                            </div>
-                        )}
-                     </div>
-                     <div className="flex-grow space-y-2">
-                        <input type="file" ref={avatarFileInputRef} onChange={handleAvatarFileChange} accept="image/png, image/jpeg, image/webp" className="hidden" />
-                        <button type="button" onClick={() => avatarFileInputRef.current?.click()} className="w-full flex items-center justify-center space-x-2 px-3 py-2 text-sm font-medium text-center rounded-md bg-background-tertiary hover:bg-opacity-80 transition-colors">
-                            <UploadIcon className="w-4 h-4" />
-                            <span>Upload File</span>
-                        </button>
-                        <button type="button" onClick={handleGenerateFromDescription} disabled={!formState.physicalAppearance?.trim() || isGeneratingAvatar} className="w-full flex items-center justify-center space-x-2 px-3 py-2 text-sm font-medium text-center rounded-md bg-background-tertiary hover:bg-opacity-80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                            <SparklesIcon className="w-4 h-4" />
-                            <span>Generate from Description</span>
-                        </button>
-                         <button type="button" onClick={handleGenerateFromPrompt} disabled={isGeneratingAvatar} className="w-full flex items-center justify-center space-x-2 px-3 py-2 text-sm font-medium text-center rounded-md bg-background-tertiary hover:bg-opacity-80 transition-colors">
-                            <SparklesIcon className="w-4 h-4" />
-                            <span>Generate from Prompt...</span>
-                        </button>
-                     </div>
-                  </div>
-                  <div className="mt-4">
-                    <label htmlFor="avatarUrl" className="block text-sm font-medium text-text-primary">Or paste image URL</label>
-                     <input
-                      id="avatarUrl"
-                      type="text"
-                      value={formState.avatarUrl || ''}
-                      onChange={(e) => handleFormChange('avatarUrl', e.target.value)}
-                      className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md shadow-sm py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                      placeholder="https://example.com/avatar.png"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label htmlFor="description" className="block text-sm font-medium text-text-primary">Description</label>
-                  <textarea
-                    id="description"
-                    value={formState.description || ''}
-                    onChange={(e) => handleFormChange('description', e.target.value)}
-                    rows={3}
-                    className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md shadow-sm py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                    placeholder="A brief, one-sentence description of the character."
-                  />
-                </div>
-                <div>
-                  <label htmlFor="tags" className="block text-sm font-medium text-text-primary">Tags</label>
-                  <input
-                    id="tags"
-                    type="text"
-                    value={(formState.tags || []).join(', ')}
-                    onChange={(e) => handleFormChange('tags', e.target.value.split(',').map(tag => tag.trim()))}
-                    className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md shadow-sm py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                    placeholder="Comma-separated, e.g., sci-fi, assistant, funny"
-                  />
-                </div>
-            </Section>
+    const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                handleChange('avatarUrl', ev.target?.result as string);
+            };
+            reader.readAsDataURL(file);
+        }
+    };
+
+    const handleGenerateAvatar = async () => {
+        if (!formState.description) {
+            alert("Please enter a description first.");
+            return;
+        }
+        setIsGeneratingAvatar(true);
+        try {
+            const prompt = `A portrait of a character matching this description: ${formState.description}. ${formState.physicalAppearance || ''} ${formState.name}`;
+            const url = await onGenerateImage(prompt);
+            if (url) {
+                handleChange('avatarUrl', url);
+            }
+        } catch (e) {
+            logger.error("Avatar generation failed", e);
+            alert("Failed to generate avatar.");
+        } finally {
+            setIsGeneratingAvatar(false);
+        }
+    };
+
+    const handleAIGenerate = async (field: keyof Character, promptTemplate: string) => {
+        if (!formState.name) {
+            alert("Please enter a character name first.");
+            return;
+        }
+        setIsGeneratingText(field as string);
+        try {
+            // Use the summaryApiConfig if available, else default
+            const config = formState.summaryApiConfig || { service: 'default' };
+            const prompt = promptTemplate.replace('{{name}}', formState.name).replace('{{desc}}', formState.description || 'a generic character');
             
-            <Section title="Persona & Prompting">
-                 <div>
-                  <label htmlFor="physicalAppearance" className="block text-sm font-medium text-text-primary">Physical Appearance</label>
-                  <textarea
-                    id="physicalAppearance"
-                    value={formState.physicalAppearance || ''}
-                    onChange={(e) => handleFormChange('physicalAppearance', e.target.value)}
-                    rows={3}
-                    className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md shadow-sm py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                    placeholder="Describe the character's physical appearance in detail."
-                  />
-                </div>
-                <div>
-                  <label htmlFor="personalityTraits" className="block text-sm font-medium text-text-primary">Personality Traits</label>
-                  <input
-                    id="personalityTraits"
-                    type="text"
-                    value={formState.personalityTraits || ''}
-                    onChange={(e) => handleFormChange('personalityTraits', e.target.value)}
-                    className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md shadow-sm py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                    placeholder="Comma-separated traits, e.g., witty, sarcastic, kind, curious"
-                  />
-                </div>
-                {voices.length > 0 && (
-                  <div>
-                    <label htmlFor="voice" className="block text-sm font-medium text-text-primary">Voice</label>
-                    <select
-                      id="voice"
-                      value={formState.voiceURI || ''}
-                      onChange={(e) => handleFormChange('voiceURI', e.target.value)}
-                      className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md shadow-sm py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                    >
-                      <option value="">Default Voice</option>
-                      {voices.map(voice => (
-                        <option key={voice.voiceURI} value={voice.voiceURI}>
-                          {`${voice.name} (${voice.lang})`}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                 <div>
-                  <label htmlFor="personality" className="block text-sm font-medium text-text-primary">Role Instruction / System Prompt</label>
-                  <textarea
-                    id="personality"
-                    value={formState.personality || ''}
-                    onChange={(e) => handleFormChange('personality', e.target.value)}
-                    rows={8}
-                    className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md shadow-sm py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                    placeholder="Describe the character's personality, quirks, and conversation style. This is the main system prompt that guides the AI's behavior."
-                  />
-                </div>
-            </Section>
+            const content = await geminiService.generateContent(prompt, config);
+            handleChange(field, content.trim());
+        } catch (e) {
+            logger.error(`Failed to generate ${field}`, e);
+            alert(`Failed to generate content: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+            setIsGeneratingText(null);
+        }
+    };
 
-            <Section title="Memory & Lore">
-                 <div>
-                    <label htmlFor="lore" className="block text-sm font-medium text-text-primary">Lore</label>
-                    <p className="text-xs text-text-secondary mb-1">Key facts about the character. Add new facts in chat with '/lore [fact]'. One fact per line.</p>
-                    <textarea
-                        id="lore"
-                        value={(formState.lore || []).join('\n')}
-                        onChange={(e) => handleFormChange('lore', e.target.value.split('\n'))}
-                        rows={8}
-                        className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md shadow-sm py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                        placeholder="Fact 1 about the character...&#10;Fact 2 about the character..."
-                    />
-                </div>
-                 <div>
-                    <label htmlFor="memory" className="block text-sm font-medium text-text-primary">Memory</label>
-                     <p className="text-xs text-text-secondary mb-1">Automatically summarized highlights from conversations.</p>
-                    <textarea
-                        id="memory"
-                        value={formState.memory || ''}
-                        readOnly
-                        rows={6}
-                        className="mt-1 block w-full bg-background-tertiary border border-border-strong rounded-md shadow-sm py-2 px-3 text-text-secondary focus:outline-none cursor-not-allowed"
-                    />
-                </div>
-            </Section>
+    const handleRagFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
 
-            <Section title="Character Logic (Experimental)" defaultOpen={false}>
-                <div className="flex items-center space-x-3">
-                    <label htmlFor="plugin-enabled" className="text-sm font-medium text-text-primary">Enable Character Logic</label>
-                    <button
-                        type="button"
-                        onClick={() => handleFormChange('pluginEnabled', !formState.pluginEnabled)}
-                        className={`${formState.pluginEnabled ? 'bg-primary-600' : 'bg-background-tertiary'} relative inline-flex h-6 w-11 items-center rounded-full`}
-                        >
-                        <span className={`${formState.pluginEnabled ? 'translate-x-6' : 'translate-x-1'} inline-block h-4 w-4 transform rounded-full bg-white transition`}/>
-                    </button>
+        try {
+            setIndexingStatus(`Processing "${file.name}"...`);
+            const newSource = await ragService.processAndIndexFile(file, formState, (progress) => {
+                setIndexingStatus(progress);
+            });
+
+            const updatedCharacter = {
+                ...formState,
+                ragSources: [...(formState.ragSources || []), newSource]
+            };
+            setFormState(updatedCharacter);
+            onSave(updatedCharacter); // Persist immediately
+            setIndexingStatus(`Successfully indexed "${file.name}"!`);
+        } catch (error) {
+            logger.error("File indexing failed:", error);
+            setIndexingStatus(`Error indexing "${file.name}": ${error instanceof Error ? error.message : "Unknown error"}`);
+        } finally {
+            if (ragFileInputRef.current) ragFileInputRef.current.value = "";
+            setTimeout(() => setIndexingStatus(null), 5000);
+        }
+    };
+    
+    const handleAttachVaultItems = () => {
+        onOpenVaultSelection((selectedIds) => {
+            const currentIds = new Set(formState.vaultAttachmentIds || []);
+            selectedIds.forEach(id => currentIds.add(id));
+            handleChange('vaultAttachmentIds', Array.from(currentIds));
+        });
+    };
+    
+    const handleRemoveVaultItem = (id: string) => {
+        const updatedIds = (formState.vaultAttachmentIds || []).filter(vid => vid !== id);
+        handleChange('vaultAttachmentIds', updatedIds);
+    };
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        onSave(formState);
+    };
+
+    const renderAIGenButton = (field: keyof Character, prompt: string, tooltip: string) => (
+        <button
+            type="button"
+            onClick={() => handleAIGenerate(field, prompt)}
+            disabled={!!isGeneratingText}
+            className="absolute top-0 right-0 p-1 text-primary-500 hover:text-primary-400 disabled:opacity-50"
+            title={tooltip}
+        >
+            {isGeneratingText === field ? <SpinnerIcon className="w-4 h-4 animate-spin"/> : <SparklesIcon className="w-4 h-4"/>}
+        </button>
+    );
+
+    return (
+        <div className="flex-1 flex flex-col bg-background-primary overflow-hidden">
+            <header className="p-4 border-b border-border-neutral flex items-center justify-between">
+                <h2 className="text-xl font-bold text-text-primary">{character ? 'Edit Character' : 'New Character'}</h2>
+                <div className="space-x-3">
+                    <button onClick={onCancel} className="px-4 py-2 rounded text-text-primary bg-background-tertiary hover:bg-opacity-80">Cancel</button>
+                    <button onClick={handleSubmit} className="px-4 py-2 rounded text-text-accent bg-primary-600 hover:bg-primary-500">Save</button>
                 </div>
-                {formState.pluginEnabled && (
-                    <div className="space-y-4 pt-4 border-t border-border-neutral mt-4">
-                        <p className="text-xs text-text-secondary">
-                            Write custom JavaScript that runs in a secure sandbox before this character generates a response. This allows for dynamic, complex behaviors. The code has access to a special <code className="bg-background-tertiary px-1 rounded">nexus</code> object to register a <code className="bg-background-tertiary px-1 rounded">'beforeResponseGenerate'</code> hook.
-                        </p>
-                        <div className="flex flex-col h-72">
-                            <label htmlFor="pluginCode" className="block text-sm font-medium text-text-primary mb-1">Plugin Code</label>
-                            <textarea
-                                id="pluginCode"
-                                value={formState.pluginCode || ''}
-                                onChange={(e) => handleFormChange('pluginCode', e.target.value)}
-                                className="flex-1 w-full bg-background-primary border border-border-strong rounded-md py-2 px-3 text-text-primary font-mono text-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 resize-none"
-                                spellCheck="false"
-                                placeholder="nexus.hooks.register('beforeResponseGenerate', (payload) => { ... });"
-                            />
-                        </div>
-                    </div>
-                )}
-            </Section>
+            </header>
             
-            <Section title="Chat API Configuration" defaultOpen={false}>
-                <div className="space-y-4">
-                    <div>
-                        <label htmlFor="api-service" className="block text-sm font-medium text-text-primary">API Service</label>
-                        <select 
-                            id="api-service"
-                            value={formState.apiConfig?.service || 'default'}
-                            onChange={(e) => handleApiConfigChange('service', e.target.value as ApiConfig['service'])}
-                            className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md shadow-sm py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                        >
-                            <option value="default">Default (Gemini)</option>
-                            <option value="gemini">Google Gemini (Custom Key)</option>
-                            <option value="openai">OpenAI-Compatible (e.g., Ollama)</option>
-                        </select>
-                    </div>
-                    {formState.apiConfig?.service === 'gemini' && (
-                         <div>
-                            <label htmlFor="api-key" className="block text-sm font-medium text-text-primary">Gemini API Key</label>
-                            <input
-                                id="api-key"
-                                type="password"
-                                value={formState.apiConfig.apiKey || ''}
-                                onChange={(e) => handleApiConfigChange('apiKey', e.target.value)}
-                                className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md shadow-sm py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                                placeholder="Enter your Gemini API key"
-                            />
-                        </div>
-                    )}
-                     {formState.apiConfig?.service === 'openai' && (
-                        <>
-                            <div>
-                                <label htmlFor="api-endpoint" className="block text-sm font-medium text-text-primary">API Endpoint</label>
-                                <input
-                                    id="api-endpoint"
-                                    type="text"
-                                    value={formState.apiConfig.apiEndpoint || ''}
-                                    onChange={(e) => handleApiConfigChange('apiEndpoint', e.target.value)}
-                                    className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                                    placeholder="e.g., http://localhost:11434/v1/chat/completions"
-                                />
-                            </div>
-                             <div>
-                                <label htmlFor="api-key" className="block text-sm font-medium text-text-primary">API Key</label>
-                                <input
-                                    id="api-key"
-                                    type="password"
-                                    value={formState.apiConfig.apiKey || ''}
-                                    onChange={(e) => handleApiConfigChange('apiKey', e.target.value)}
-                                    className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                                    placeholder="API Key (optional for some services)"
-                                />
-                            </div>
-                            <div>
-                                <label htmlFor="api-model" className="block text-sm font-medium text-text-primary">Model Name</label>
-                                <input
-                                    id="api-model"
-                                    type="text"
-                                    value={formState.apiConfig.model || ''}
-                                    onChange={(e) => handleApiConfigChange('model', e.target.value)}
-                                    className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                                    placeholder="e.g., llama3"
-                                />
-                            </div>
-                        </>
-                    )}
-                    {(formState.apiConfig?.service === 'gemini' || formState.apiConfig?.service === 'openai') && (
-                        <div>
-                            <label htmlFor="api-rate-limit" className="block text-sm font-medium text-text-primary">Request Delay (ms)</label>
-                            <input
-                                id="api-rate-limit"
-                                type="number"
-                                value={formState.apiConfig.rateLimit || ''}
-                                onChange={(e) => handleApiConfigChange('rateLimit', e.target.value ? parseInt(e.target.value, 10) : undefined)}
-                                className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                                placeholder="e.g., 1000 (for 1 request per second)"
-                                min="0"
-                            />
-                            <p className="text-xs text-text-secondary mt-1">Minimum time to wait between requests from this character to avoid rate limits.</p>
-                        </div>
-                    )}
-                </div>
-            </Section>
+            <div className="flex border-b border-border-neutral bg-background-secondary overflow-x-auto">
+                <button onClick={() => setActiveTab('basic')} className={`px-4 py-3 text-sm font-medium ${activeTab === 'basic' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-text-secondary hover:text-text-primary'}`}>Basic Info</button>
+                <button onClick={() => setActiveTab('details')} className={`px-4 py-3 text-sm font-medium ${activeTab === 'details' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-text-secondary hover:text-text-primary'}`}>Details & Personality</button>
+                <button onClick={() => setActiveTab('advanced')} className={`px-4 py-3 text-sm font-medium ${activeTab === 'advanced' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-text-secondary hover:text-text-primary'}`}>Advanced Logic (RAG/Vault)</button>
+                <button onClick={() => setActiveTab('memory')} className={`px-4 py-3 text-sm font-medium ${activeTab === 'memory' ? 'text-primary-600 border-b-2 border-primary-600' : 'text-text-secondary hover:text-text-primary'}`}>Memory & Intelligence</button>
+            </div>
 
-            <Section title="Retrieval-Augmented Generation (RAG)" defaultOpen={false}>
-                <div className="flex items-center space-x-3">
-                    <label htmlFor="rag-enabled" className="text-sm font-medium text-text-primary">Enable RAG</label>
-                    <button
-                        type="button"
-                        onClick={() => handleFormChange('ragEnabled', !formState.ragEnabled)}
-                        className={`${formState.ragEnabled ? 'bg-primary-600' : 'bg-background-tertiary'} relative inline-flex h-6 w-11 items-center rounded-full`}
-                        >
-                        <span className={`${formState.ragEnabled ? 'translate-x-6' : 'translate-x-1'} inline-block h-4 w-4 transform rounded-full bg-white transition`}/>
-                    </button>
-                </div>
-                {formState.ragEnabled && (
-                    <div className="space-y-4 pt-4 border-t border-border-neutral mt-4">
-                         <p className="text-xs text-text-secondary">
-                            Enable this to allow the character to retrieve information from uploaded documents to answer questions. An embedding API is required.
-                         </p>
-                        
-                        <h4 className="text-md font-semibold">Knowledge Base</h4>
-                        <div className="p-2 border border-dashed border-border-strong rounded-md space-y-2">
-                            {(formState.ragSources || []).map(source => (
-                                <div key={source.id} className="flex items-center justify-between bg-background-tertiary p-2 rounded">
-                                    <span className="text-sm truncate">{source.fileName}</span>
-                                    <button type="button" onClick={() => onDeleteRagSource(character!.id, source.id)} className="p-1 text-accent-red hover:opacity-80">
-                                        <TrashIcon className="w-4 h-4" />
-                                    </button>
+            <div className="flex-1 overflow-y-auto p-4 md:p-8">
+                <form onSubmit={handleSubmit} className="max-w-4xl mx-auto space-y-6">
+                    
+                    {/* --- BASIC INFO TAB --- */}
+                    {activeTab === 'basic' && (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fadeIn">
+                            <div className="col-span-1 flex flex-col items-center space-y-4">
+                                <div className="w-32 h-32 rounded-full bg-background-tertiary overflow-hidden border-2 border-border-strong relative group">
+                                    {formState.avatarUrl ? (
+                                        <img src={formState.avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                                    ) : (
+                                        <div className="flex items-center justify-center w-full h-full text-text-secondary">No Avatar</div>
+                                    )}
+                                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-2">
+                                        <button type="button" onClick={() => avatarInputRef.current?.click()} className="p-2 text-white hover:bg-white/20 rounded-full" title="Upload"><UploadIcon className="w-5 h-5"/></button>
+                                        <button type="button" onClick={handleGenerateAvatar} disabled={isGeneratingAvatar} className="p-2 text-white hover:bg-white/20 rounded-full" title="Generate">{isGeneratingAvatar ? <SpinnerIcon className="w-5 h-5 animate-spin"/> : <ImageIcon className="w-5 h-5"/>}</button>
+                                    </div>
                                 </div>
-                            ))}
-                             {character && (
-                                <>
-                                    <input type="file" ref={ragFileInputRef} onChange={handleRagFileUpload} accept=".txt,.md" className="hidden" disabled={!!indexingStatus} />
-                                    <button type="button" onClick={() => ragFileInputRef.current?.click()} disabled={!!indexingStatus} className="w-full flex items-center justify-center space-x-2 px-3 py-2 text-sm font-medium text-center rounded-md bg-background-tertiary hover:bg-opacity-80 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                                        <UploadIcon className="w-4 h-4" />
-                                        <span>Upload Knowledge File (.txt, .md)</span>
-                                    </button>
-                                </>
-                            )}
-                            {indexingStatus && <p className="text-xs text-center text-text-secondary p-2">{indexingStatus}</p>}
-                        </div>
-
-                        <h4 className="text-md font-semibold pt-4 border-t border-border-neutral">Embedding API Configuration</h4>
-                        <div className="space-y-4">
-                            <div>
-                                <label htmlFor="embed-api-service" className="block text-sm font-medium text-text-primary">Embedding Service</label>
+                                <input type="file" ref={avatarInputRef} className="hidden" accept="image/*" onChange={handleAvatarUpload} />
+                                <input 
+                                    type="text" 
+                                    placeholder="Character Name" 
+                                    className="w-full bg-background-secondary border border-border-strong rounded px-3 py-2 text-text-primary text-center font-bold"
+                                    value={formState.name}
+                                    onChange={e => handleChange('name', e.target.value)}
+                                    required
+                                />
                                 <select 
-                                    id="embed-api-service"
-                                    value={formState.embeddingConfig?.service || 'gemini'}
-                                    onChange={(e) => handleEmbeddingConfigChange('service', e.target.value as EmbeddingConfig['service'])}
-                                    className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md shadow-sm py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                                    value={formState.characterType || 'character'} 
+                                    onChange={e => handleChange('characterType', e.target.value)}
+                                    className="w-full bg-background-secondary border border-border-strong rounded px-3 py-2 text-text-primary text-sm"
                                 >
-                                    <option value="gemini">Google Gemini</option>
-                                    <option value="openai">OpenAI-Compatible (e.g., Ollama)</option>
+                                    <option value="character">Persona (Character)</option>
+                                    <option value="narrator">Scenario (Narrator)</option>
                                 </select>
                             </div>
-                             {formState.embeddingConfig?.service === 'gemini' && (
-                                 <div>
-                                    <label htmlFor="embed-api-key" className="block text-sm font-medium text-text-primary">Gemini API Key</label>
-                                    <input
-                                        id="embed-api-key"
-                                        type="password"
-                                        value={formState.embeddingConfig.apiKey || ''}
-                                        onChange={(e) => handleEmbeddingConfigChange('apiKey', e.target.value)}
-                                        className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                                        placeholder="Leave blank to use default key"
+                            <div className="col-span-1 md:col-span-2 space-y-4">
+                                <div className="relative">
+                                    <label className="block text-sm font-medium text-text-secondary mb-1">Description</label>
+                                    <textarea 
+                                        className="w-full bg-background-secondary border border-border-strong rounded px-3 py-2 text-text-primary h-24 resize-none"
+                                        value={formState.description}
+                                        onChange={e => handleChange('description', e.target.value)}
+                                        placeholder="Short description of the character..."
+                                    />
+                                    {renderAIGenButton('description', "Write a short, engaging description for a character named {{name}}.", "Auto-generate Description")}
+                                </div>
+                                <div className="relative">
+                                    <label className="block text-sm font-medium text-text-secondary mb-1">First Message</label>
+                                    <textarea 
+                                        className="w-full bg-background-secondary border border-border-strong rounded px-3 py-2 text-text-primary h-32"
+                                        value={formState.firstMessage}
+                                        onChange={e => handleChange('firstMessage', e.target.value)}
+                                        placeholder="Greeting message sent when a new chat starts..."
+                                    />
+                                    {renderAIGenButton('firstMessage', "Write an engaging first message for a roleplay character named {{name}} described as: {{desc}}. Use {{user}} to refer to the user.", "Auto-generate First Message")}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- DETAILS TAB --- */}
+                    {activeTab === 'details' && (
+                        <div className="space-y-6 animate-fadeIn">
+                            <div className="relative">
+                                <label className="block text-sm font-medium text-text-secondary mb-1">Personality / Role Instruction</label>
+                                <textarea 
+                                    className="w-full bg-background-secondary border border-border-strong rounded px-3 py-2 text-text-primary h-48"
+                                    value={formState.personality}
+                                    onChange={e => handleChange('personality', e.target.value)}
+                                    placeholder="Detailed personality instructions, behavior guidelines, and traits..."
+                                />
+                                {renderAIGenButton('personality', "Write detailed personality and roleplay instructions for {{name}}, described as: {{desc}}.", "Auto-generate Personality")}
+                            </div>
+                            
+                            <div className="relative">
+                                <label className="block text-sm font-medium text-text-secondary mb-1">Backstory</label>
+                                <textarea 
+                                    className="w-full bg-background-secondary border border-border-strong rounded px-3 py-2 text-text-primary h-40"
+                                    value={formState.backstory}
+                                    onChange={e => handleChange('backstory', e.target.value)}
+                                    placeholder="The character's history, origin, and key life events..."
+                                />
+                                {renderAIGenButton('backstory', "Write a compelling backstory for {{name}}, described as: {{desc}}.", "Auto-generate Backstory")}
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-text-secondary mb-1">Physical Appearance</label>
+                                    <textarea 
+                                        className="w-full bg-background-primary border border-border-strong rounded px-3 py-2 text-text-primary h-20"
+                                        value={formState.physicalAppearance}
+                                        onChange={e => handleChange('physicalAppearance', e.target.value)}
+                                        placeholder="Eye color, hair style, clothing, etc."
                                     />
                                 </div>
-                            )}
-                             {formState.embeddingConfig?.service === 'openai' && (
-                                <>
-                                    <div>
-                                        <label htmlFor="embed-api-endpoint" className="block text-sm font-medium text-text-primary">API Endpoint</label>
-                                        <input
-                                            id="embed-api-endpoint"
-                                            type="text"
-                                            value={formState.embeddingConfig.apiEndpoint || ''}
-                                            onChange={(e) => handleEmbeddingConfigChange('apiEndpoint', e.target.value)}
-                                            className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                                            placeholder="e.g., http://localhost:11434/api/embeddings"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label htmlFor="embed-api-key" className="block text-sm font-medium text-text-primary">API Key</label>
-                                        <input
-                                            id="embed-api-key"
-                                            type="password"
-                                            value={formState.embeddingConfig.apiKey || ''}
-                                            onChange={(e) => handleEmbeddingConfigChange('apiKey', e.target.value)}
-                                            className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                                            placeholder="API Key (optional for some services)"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label htmlFor="embed-api-model" className="block text-sm font-medium text-text-primary">Model Name</label>
-                                        <input
-                                            id="embed-api-model"
-                                            type="text"
-                                            value={formState.embeddingConfig.model || ''}
-                                            onChange={(e) => handleEmbeddingConfigChange('model', e.target.value)}
-                                            className="mt-1 block w-full bg-background-secondary border border-border-strong rounded-md py-2 px-3 text-text-primary focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                                            placeholder="e.g., nomic-embed-text"
-                                        />
-                                    </div>
-                                </>
-                            )}
+                                <div>
+                                    <label className="block text-sm font-medium text-text-secondary mb-1">Personality Traits (comma-separated)</label>
+                                    <textarea 
+                                        className="w-full bg-background-primary border border-border-strong rounded px-3 py-2 text-text-primary h-20"
+                                        value={formState.personalityTraits}
+                                        onChange={e => handleChange('personalityTraits', e.target.value)}
+                                        placeholder="e.g. Brave, Stubborn, Intelligent..."
+                                    />
+                                </div>
+                            </div>
                         </div>
-                    </div>
-                )}
-            </Section>
-           
-            <div className="flex justify-end space-x-4 pt-4 pb-4">
-              <button
-                type="button"
-                onClick={onCancel}
-                className="py-2 px-4 border border-border-strong rounded-md shadow-sm text-sm font-medium text-text-primary bg-background-tertiary hover:bg-opacity-80 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-background-primary focus:ring-primary-500"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-text-accent bg-primary-600 hover:bg-primary-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-background-primary focus:ring-primary-500"
-              >
-                Save Character
-              </button>
+                    )}
+
+                    {/* --- ADVANCED LOGIC TAB --- */}
+                    {activeTab === 'advanced' && (
+                        <div className="space-y-6 animate-fadeIn">
+                            <div className="bg-background-secondary p-4 rounded-lg border border-border-neutral">
+                                <h3 className="text-lg font-medium text-text-primary mb-4 flex items-center">
+                                    <SparklesIcon className="w-5 h-5 mr-2 text-accent-yellow"/> Deep Thinking & Grounding
+                                </h3>
+                                
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <span className="text-sm font-medium text-text-primary block">Thinking Budget (Deep Thinking)</span>
+                                            <span className="text-xs text-text-secondary">Allows the model to reason before responding (Gemini 2.5/3.0 only). 0 to disable.</span>
+                                        </div>
+                                        <input 
+                                            type="number" 
+                                            value={formState.thinkingBudget || 0}
+                                            onChange={e => handleChange('thinkingBudget', parseInt(e.target.value) || 0)}
+                                            className="w-24 bg-background-primary border border-border-strong rounded px-2 py-1 text-text-primary"
+                                            min="0"
+                                            max="32000"
+                                            step="1024"
+                                        />
+                                    </div>
+
+                                    <div className="flex items-center space-x-3">
+                                        <input 
+                                            type="checkbox" 
+                                            id="useSearch"
+                                            checked={formState.useSearchGrounding || false} 
+                                            onChange={e => handleChange('useSearchGrounding', e.target.checked)}
+                                            className="rounded border-border-strong bg-background-primary text-primary-600 focus:ring-primary-500 h-5 w-5"
+                                        />
+                                        <div>
+                                            <label htmlFor="useSearch" className="text-sm font-medium text-text-primary block">Enable Google Search Grounding</label>
+                                            <span className="text-xs text-text-secondary">Allows the character to access real-time information from the web.</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="bg-background-secondary p-4 rounded-lg border border-border-neutral space-y-4">
+                                <h3 className="text-lg font-medium text-text-primary flex items-center">
+                                    <VaultIcon className="w-5 h-5 mr-2 text-text-secondary" /> Vault Attachments
+                                </h3>
+                                <p className="text-sm text-text-secondary">
+                                    Grant this character access to specific files from your Secure Vault. The content of these files will be visible to the character during chats.
+                                </p>
+                                
+                                <div className="space-y-2">
+                                    {(formState.vaultAttachmentIds || []).map(id => (
+                                        <div key={id} className="flex items-center justify-between p-2 bg-background-primary rounded border border-border-neutral">
+                                            <span className="text-sm text-text-primary font-mono text-xs truncate max-w-[200px]">{id}</span>
+                                            <button 
+                                                type="button" 
+                                                onClick={() => handleRemoveVaultItem(id)}
+                                                className="text-accent-red hover:text-red-400"
+                                                title="Remove Access"
+                                            >
+                                                <TrashIcon className="w-4 h-4"/>
+                                            </button>
+                                        </div>
+                                    ))}
+                                    {(formState.vaultAttachmentIds?.length === 0) && <p className="text-sm text-text-secondary italic">No vault items attached.</p>}
+                                    
+                                    <button 
+                                        type="button" 
+                                        onClick={handleAttachVaultItems}
+                                        className="w-full flex items-center justify-center space-x-2 py-2 border border-dashed border-border-strong rounded text-text-secondary hover:text-text-primary hover:bg-background-tertiary"
+                                    >
+                                        <PlusIcon className="w-4 h-4" /> <span>Attach from Vault</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="bg-background-secondary p-4 rounded-lg border border-border-neutral space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="text-lg font-medium text-text-primary">Knowledge Base (RAG)</h3>
+                                    <label className="flex items-center space-x-2 cursor-pointer">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={formState.ragEnabled} 
+                                            onChange={e => handleChange('ragEnabled', e.target.checked)}
+                                            className="rounded border-border-strong bg-background-primary text-primary-600 focus:ring-primary-500"
+                                        />
+                                        <span className="text-sm text-text-primary">Enable RAG</span>
+                                    </label>
+                                </div>
+                                
+                                {formState.ragEnabled && (
+                                    <div className="space-y-4">
+                                        <div className="border border-dashed border-border-strong rounded-lg p-6 flex flex-col items-center justify-center bg-background-primary">
+                                            <input 
+                                                type="file" 
+                                                ref={ragFileInputRef} 
+                                                className="hidden" 
+                                                onChange={handleRagFileUpload} 
+                                                accept=".txt,.md,.json"
+                                            />
+                                            <button 
+                                                type="button"
+                                                onClick={() => ragFileInputRef.current?.click()}
+                                                className="flex items-center space-x-2 text-primary-500 hover:text-primary-400"
+                                            >
+                                                <PlusIcon className="w-6 h-6" />
+                                                <span className="font-medium">Upload Knowledge File</span>
+                                            </button>
+                                            <p className="text-xs text-text-secondary mt-2">Supported: .txt, .md, .json</p>
+                                        </div>
+                                        
+                                        {indexingStatus && (
+                                            <div className="text-sm text-center text-primary-500 animate-pulse font-medium">
+                                                {indexingStatus}
+                                            </div>
+                                        )}
+
+                                        {formState.ragSources && formState.ragSources.length > 0 && (
+                                            <div className="space-y-2">
+                                                <h4 className="text-sm font-medium text-text-secondary">Indexed Files:</h4>
+                                                {formState.ragSources.map(source => (
+                                                    <div key={source.id} className="flex items-center justify-between p-2 bg-background-primary rounded border border-border-neutral">
+                                                        <span className="text-sm text-text-primary truncate">{source.fileName}</span>
+                                                        <button 
+                                                            type="button"
+                                                            onClick={() => onDeleteRagSource(formState.id, source.id)}
+                                                            className="text-accent-red hover:text-red-400 p-1"
+                                                        >
+                                                            <TrashIcon className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* --- MEMORY & INTELLIGENCE TAB --- */}
+                    {activeTab === 'memory' && (
+                        <div className="space-y-6 animate-fadeIn">
+                            <div className="bg-background-secondary p-4 rounded-lg border border-border-neutral">
+                                <h3 className="text-lg font-medium text-text-primary mb-2 flex items-center">
+                                    <CogIcon className="w-5 h-5 mr-2 text-text-secondary" /> Context & Memory Manager
+                                </h3>
+                                <p className="text-sm text-text-secondary mb-4">
+                                    Configure a separate LLM for memory summarization, context extraction, and "AI Assist" features. 
+                                    This allows you to use a faster/cheaper model (like Flash) for maintenance tasks, keeping your main interaction model (like Pro) focused on roleplay.
+                                </p>
+
+                                <div className="space-y-4 border-t border-border-neutral pt-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-text-primary mb-1">Service Provider</label>
+                                        <select 
+                                            value={formState.summaryApiConfig?.service || 'default'}
+                                            onChange={e => handleNestedChange('summaryApiConfig', 'service', e.target.value)}
+                                            className="w-full bg-background-primary border border-border-strong rounded px-3 py-2 text-text-primary"
+                                        >
+                                            <option value="default">Same as Character (Default)</option>
+                                            <option value="gemini">Google Gemini</option>
+                                            <option value="openai">OpenAI Compatible</option>
+                                        </select>
+                                    </div>
+
+                                    {(formState.summaryApiConfig?.service === 'gemini' || formState.summaryApiConfig?.service === 'openai') && (
+                                        <>
+                                            <div>
+                                                <label className="block text-sm font-medium text-text-primary mb-1">API Key</label>
+                                                <input 
+                                                    type="password"
+                                                    value={formState.summaryApiConfig?.apiKey || ''}
+                                                    onChange={e => handleNestedChange('summaryApiConfig', 'apiKey', e.target.value)}
+                                                    placeholder="API Key"
+                                                    className="w-full bg-background-primary border border-border-strong rounded px-3 py-2 text-text-primary"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-text-primary mb-1">Model ID</label>
+                                                <input 
+                                                    type="text"
+                                                    value={formState.summaryApiConfig?.model || ''}
+                                                    onChange={e => handleNestedChange('summaryApiConfig', 'model', e.target.value)}
+                                                    placeholder="e.g. gemini-2.5-flash-latest"
+                                                    className="w-full bg-background-primary border border-border-strong rounded px-3 py-2 text-text-primary"
+                                                />
+                                            </div>
+                                            {formState.summaryApiConfig?.service === 'openai' && (
+                                                <div>
+                                                    <label className="block text-sm font-medium text-text-primary mb-1">API Endpoint</label>
+                                                    <input 
+                                                        type="text"
+                                                        value={formState.summaryApiConfig?.apiEndpoint || ''}
+                                                        onChange={e => handleNestedChange('summaryApiConfig', 'apiEndpoint', e.target.value)}
+                                                        placeholder="e.g. https://api.openai.com/v1/chat/completions"
+                                                        className="w-full bg-background-primary border border-border-strong rounded px-3 py-2 text-text-primary"
+                                                    />
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                            
+                            <div className="bg-background-secondary p-4 rounded-lg border border-border-neutral">
+                                <h3 className="text-lg font-medium text-text-primary mb-2">Primary Chat Model Override</h3>
+                                <p className="text-sm text-text-secondary mb-4">
+                                    Leave generic to use the system default, or configure specific API settings for this character's chat responses.
+                                </p>
+                                <div className="space-y-4 border-t border-border-neutral pt-4">
+                                     <div>
+                                        <label className="block text-sm font-medium text-text-primary mb-1">Service Provider</label>
+                                        <select 
+                                            value={formState.apiConfig?.service || 'default'}
+                                            onChange={e => handleNestedChange('apiConfig', 'service', e.target.value)}
+                                            className="w-full bg-background-primary border border-border-strong rounded px-3 py-2 text-text-primary"
+                                        >
+                                            <option value="default">System Default (Gemini)</option>
+                                            <option value="gemini">Google Gemini</option>
+                                            <option value="openai">OpenAI Compatible</option>
+                                        </select>
+                                    </div>
+                                    {(formState.apiConfig?.service === 'gemini' || formState.apiConfig?.service === 'openai') && (
+                                        <>
+                                            <div>
+                                                <label className="block text-sm font-medium text-text-primary mb-1">API Key</label>
+                                                <input 
+                                                    type="password"
+                                                    value={formState.apiConfig?.apiKey || ''}
+                                                    onChange={e => handleNestedChange('apiConfig', 'apiKey', e.target.value)}
+                                                    placeholder="API Key"
+                                                    className="w-full bg-background-primary border border-border-strong rounded px-3 py-2 text-text-primary"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm font-medium text-text-primary mb-1">Model ID</label>
+                                                <input 
+                                                    type="text"
+                                                    value={formState.apiConfig?.model || ''}
+                                                    onChange={e => handleNestedChange('apiConfig', 'model', e.target.value)}
+                                                    placeholder="e.g. gemini-3-pro-preview"
+                                                    className="w-full bg-background-primary border border-border-strong rounded px-3 py-2 text-text-primary"
+                                                />
+                                            </div>
+                                            {formState.apiConfig?.service === 'openai' && (
+                                                <div>
+                                                    <label className="block text-sm font-medium text-text-primary mb-1">API Endpoint</label>
+                                                    <input 
+                                                        type="text"
+                                                        value={formState.apiConfig?.apiEndpoint || ''}
+                                                        onChange={e => handleNestedChange('apiConfig', 'apiEndpoint', e.target.value)}
+                                                        placeholder="e.g. https://api.openai.com/v1/chat/completions"
+                                                        className="w-full bg-background-primary border border-border-strong rounded px-3 py-2 text-text-primary"
+                                                    />
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                </form>
             </div>
-        </form>
-      </div>
-    </div>
-  );
+        </div>
+    );
 };

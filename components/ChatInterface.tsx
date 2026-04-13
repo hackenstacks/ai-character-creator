@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Character, ChatSession, Message, CryptoKeys, GeminiApiRequest, Lorebook } from '../types.ts';
 import { streamChatResponse, streamGenericResponse, generateContent } from '../services/geminiService.ts';
@@ -5,6 +6,7 @@ import * as cryptoService from '../services/cryptoService.ts';
 import * as ttsService from '../services/ttsService.ts';
 import * as ragService from '../services/ragService.ts';
 import * as lorebookService from '../services/lorebookService.ts';
+import * as secureStorage from '../services/secureStorage.ts';
 import { logger } from '../services/loggingService.ts';
 import { ChatBubbleIcon } from './icons/ChatBubbleIcon.tsx';
 import { ImageIcon } from './icons/ImageIcon.tsx';
@@ -17,6 +19,7 @@ import { ExclamationTriangleIcon } from './icons/ExclamationTriangleIcon.tsx';
 import { PluginSandbox } from '../services/pluginSandbox.ts';
 import { ImageGenerationWindow } from './ImageGenerationWindow.tsx';
 import { PaletteIcon } from './icons/PaletteIcon.tsx';
+import { InputModal } from './InputModal.tsx';
 
 interface ChatInterfaceProps {
   session: ChatSession;
@@ -30,6 +33,13 @@ interface ChatInterfaceProps {
   onMemoryImport: (fromSessionId: string, toSessionId: string) => void;
   onSaveBackup: () => void;
   handlePluginApiRequest: (request: GeminiApiRequest) => Promise<any>;
+}
+
+interface InputModalState {
+    title: string;
+    label: string;
+    placeholder?: string;
+    onConfirm: (value: string) => void;
 }
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({ 
@@ -53,6 +63,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [isTtsEnabled, setIsTtsEnabled] = useState(false);
   const [verifiedSignatures, setVerifiedSignatures] = useState<Record<string, boolean>>({});
   const [isImageWindowVisible, setIsImageWindowVisible] = useState(false);
+  const [inputModal, setInputModal] = useState<InputModalState | null>(null);
 
   const nextSpeakerIndex = useRef(0);
   const systemOverride = useRef<string | null>(null);
@@ -102,7 +113,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   useEffect(() => {
     const verifyAllMessages = async () => {
         const verificationResults: Record<string, boolean> = {};
-        for (const msg of currentSession.messages) {
+        const msgs = currentSession.messages || [];
+        for (const msg of msgs) {
             if (msg.signature && msg.publicKeyJwk) {
                 try {
                     const publicKey = await cryptoService.importKey(msg.publicKeyJwk, 'verify');
@@ -140,7 +152,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   }, [onSessionUpdate]);
 
   const addMessage = useCallback((message: Message) => {
-    updateSession(prevSession => ({ ...prevSession, messages: [...prevSession.messages, message] }));
+    updateSession(prevSession => ({ ...prevSession, messages: [...(prevSession.messages || []), message] }));
   }, [updateSession]);
 
   const addSystemMessage = useCallback((content: string) => {
@@ -167,7 +179,29 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         if (loreContext) {
             logger.log("Injecting Lorebook context for response.", { character: character.name });
             const contextInstruction = `[WORLD INFO]:\n${loreContext}`;
-            finalOverride = `${contextInstruction}\n\n${finalOverride}`;
+            finalOverride = finalOverride ? `${contextInstruction}\n\n${finalOverride}` : contextInstruction;
+        }
+    }
+    
+    // --- Vault Content Injection ---
+    if (character.vaultAttachmentIds && character.vaultAttachmentIds.length > 0) {
+        try {
+            logger.log(`Fetching ${character.vaultAttachmentIds.length} vault items for character context...`);
+            const vaultItems = await secureStorage.getVaultItemsByIds(character.vaultAttachmentIds);
+            const vaultContext = vaultItems.map(item => {
+                // Heuristic: truncate extremely long text files to prevent context overflow errors
+                const content = item.content && item.content.length > 5000 
+                    ? item.content.substring(0, 5000) + "... [truncated]" 
+                    : item.content || '[Empty]';
+                return `File Name: ${item.name}\nContent:\n${content}`;
+            }).join('\n\n');
+            
+            if (vaultContext) {
+                const vaultInstruction = `[ATTACHED VAULT FILES]:\nYou have access to the following files:\n${vaultContext}`;
+                finalOverride = finalOverride ? `${vaultInstruction}\n\n${finalOverride}` : vaultInstruction;
+            }
+        } catch (error) {
+            logger.error("Failed to inject vault items into context", error);
         }
     }
 
@@ -229,9 +263,35 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     } finally {
         setIsStreaming(false);
 
+        // --- Process Dynamic Avatar Changes ---
+        const avatarRegex = /\[change_avatar:\s*(.*?)\]/g;
+        let avatarMatch;
+        while ((avatarMatch = avatarRegex.exec(fullResponse)) !== null) {
+            const description = avatarMatch[1];
+            if (description) {
+                logger.log(`Character ${character.name} requested avatar change: ${description}`);
+                // Async avatar generation
+                handleImageGeneration(description, 'direct').then((result: any) => {
+                     // We need to fetch the image result properly. handleImageGeneration currently adds a message.
+                     // We need a silent generation here.
+                     // Re-using the prompt logic:
+                     const payload = { type: 'direct', value: description };
+                     onTriggerHook('generateImage', payload).then((res: any) => {
+                         if (res.url) {
+                             logger.log(`Updating avatar for ${character.name}`);
+                             onCharacterUpdate({ ...character, avatarUrl: res.url });
+                         }
+                     });
+                });
+            }
+        }
+
+        // --- Process Inline Image Generation ---
         const imageRegex = /\[generate_image:\s*(.*?)\]/g;
         const imageMatches = [...fullResponse.matchAll(imageRegex)];
-        const cleanedResponse = fullResponse.replace(imageRegex, '').trim();
+        
+        // Clean the response content for display/storage
+        let cleanedResponse = fullResponse.replace(avatarRegex, '').replace(imageRegex, '').trim();
 
         if (cleanedResponse.length > 0 || imageMatches.length > 0) {
             let finalMessage: Message = { ...modelPlaceholder, content: cleanedResponse };
@@ -274,7 +334,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             }));
         }
     }
-  }, [participants, isTtsEnabled, updateSession, addSystemMessage, handlePluginApiRequest, attachedLorebooks]);
+  }, [participants, isTtsEnabled, updateSession, addSystemMessage, handlePluginApiRequest, attachedLorebooks, onCharacterUpdate, onTriggerHook]);
 
   const continueAutoConversation = useCallback(async () => {
     if (autoConverseTimeout.current) clearTimeout(autoConverseTimeout.current);
@@ -303,7 +363,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         content: `[The AIs will now converse about: "${topic}"]`,
         timestamp: new Date().toISOString()
     };
-    const updatedMessages = [...currentSessionRef.current.messages, starterMessage];
+    const updatedMessages = [...(currentSessionRef.current.messages || []), starterMessage];
     updateSession(current => ({...current, messages: updatedMessages}));
     
     const firstSpeaker = participants[nextSpeakerIndex.current % participants.length];
@@ -331,7 +391,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         }
         case 'snapshot':
         case 'memorize': {
-            const history = currentSessionRef.current.messages.slice(-10);
+            const msgs = currentSessionRef.current.messages || [];
+            const history = msgs.slice(-10);
             if (history.length === 0) {
                 addSystemMessage("Not enough conversation history to save a memory snapshot.");
                 return;
@@ -341,12 +402,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             const prompt = `Summarize the key events, information, and character developments from this recent conversation snippet into a concise paragraph for a character's long-term memory. Focus on facts and relationship changes. Conversation:\n\n${context}`;
             
             try {
-                const summary = await generateContent(prompt);
+                // Find a character with a summary config, or default to general generation
+                const summaryChar = participants.find(p => p.summaryApiConfig) || participants[0];
+                const summaryConfig = summaryChar?.summaryApiConfig || { service: 'default' };
+                
+                const summary = await generateContent(prompt, summaryConfig);
+                
                 participants.forEach(p => {
                     const updatedMemory = `${p.memory || ''}\n\n[Memory from ${new Date().toLocaleString()}]\n${summary}`;
                     onCharacterUpdate({...p, memory: updatedMemory.trim()});
                 });
-                addSystemMessage("Memory snapshot saved for all participants.");
+                addSystemMessage("Memory snapshot saved for all participants using the configured memory manager.");
             } catch (e) {
                 logger.error("Failed to generate memory summary", e);
                 addSystemMessage("Failed to generate memory summary. See logs for details.");
@@ -380,7 +446,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             nextSpeakerIndex.current = targetIndex;
 
             const userMessage = await createUserMessage(prompt);
-            const newHistory = [...currentSessionRef.current.messages, userMessage];
+            const newHistory = [...(currentSessionRef.current.messages || []), userMessage];
             addMessage(userMessage);
 
             await triggerAIResponse(target, newHistory);
@@ -478,7 +544,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
 
     const userMessage = await createUserMessage(trimmedInput);
-    const newHistory = [...currentSessionRef.current.messages, userMessage];
+    const newHistory = [...(currentSessionRef.current.messages || []), userMessage];
     addMessage(userMessage);
     setInput('');
 
@@ -531,12 +597,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
         if (result.url) {
             updateSession(curr => {
-                const updatedMessages = curr.messages.map((m): Message => m.timestamp === attachmentMessage.timestamp 
+                const updatedMessages = (curr.messages || []).map((m): Message => m.timestamp === attachmentMessage.timestamp 
                     ? { ...m, content: '', attachment: { ...m.attachment!, status: 'done', url: result.url } }
                     : m
                 );
                 return { ...curr, messages: updatedMessages };
             });
+            return result; // Return result for potential chaining
         } else {
             throw new Error(result.error || 'Image generation failed with no message.');
         }
@@ -544,7 +611,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
            const errorMessage = error instanceof Error ? error.message : String(error);
            logger.error('Image generation failed:', error);
            updateSession(curr => {
-                const updatedMessages = curr.messages.map((m): Message => m.timestamp === attachmentMessage.timestamp 
+                const updatedMessages = (curr.messages || []).map((m): Message => m.timestamp === attachmentMessage.timestamp 
                     ? { ...m, content: `Image generation failed: ${errorMessage}`, attachment: { ...m.attachment!, status: 'error' } }
                     : m
                 );
@@ -564,8 +631,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const handleNarration = async (prompt: string, type: 'direct' | 'summary') => {
     let finalPrompt = prompt;
     if (type === 'summary') {
+        const msgs = currentSessionRef.current.messages || [];
         const summaryPrompt = `Based on the following conversation, create a short, descriptive narration of the current scene or situation. Be creative and concise. Conversation:\n\n${prompt}`;
         try {
+            // Use session default config
             finalPrompt = await generateContent(summaryPrompt);
         } catch(e) {
             addSystemMessage("Failed to summarize context for narration.");
@@ -589,7 +658,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         }
     );
      updateSession(curr => {
-        const finalMessages = curr.messages.map(m => m.timestamp === narratorPlaceholder.timestamp ? {...m, content: fullResponse} : m);
+        const finalMessages = (curr.messages || []).map(m => m.timestamp === narratorPlaceholder.timestamp ? {...m, content: fullResponse} : m);
         return { ...curr, messages: finalMessages };
     });
   };
@@ -598,12 +667,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (imageClickTimeout.current) {
       clearTimeout(imageClickTimeout.current);
       imageClickTimeout.current = null;
-      const context = currentSessionRef.current.messages.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
+      const msgs = currentSessionRef.current.messages || [];
+      const context = msgs.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
       handleImageGeneration(context, 'summary');
     } else {
       imageClickTimeout.current = window.setTimeout(() => {
-        const prompt = window.prompt("Enter a prompt for the image:");
-        if (prompt) handleImageGeneration(prompt, 'direct');
+        setInputModal({
+            title: "Generate Image",
+            label: "Enter a prompt for the image:",
+            placeholder: "A cyberpunk city in the rain...",
+            onConfirm: (prompt) => {
+                handleImageGeneration(prompt, 'direct');
+                setInputModal(null);
+            }
+        });
         imageClickTimeout.current = null;
       }, 250);
     }
@@ -613,12 +690,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     if (narratorClickTimeout.current) {
       clearTimeout(narratorClickTimeout.current);
       narratorClickTimeout.current = null;
-      const context = currentSessionRef.current.messages.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
+      const msgs = currentSessionRef.current.messages || [];
+      const context = msgs.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
       handleNarration(context, 'summary');
     } else {
       narratorClickTimeout.current = window.setTimeout(() => {
-        const prompt = window.prompt("Enter a narration instruction (e.g., 'Describe the weather changing'):");
-        if (prompt) handleNarration(prompt, 'direct');
+        setInputModal({
+            title: "Narrator Instruction",
+            label: "Enter a narration instruction:",
+            placeholder: "Describe the weather changing unexpectedly...",
+            onConfirm: (prompt) => {
+                handleNarration(prompt, 'direct');
+                setInputModal(null);
+            }
+        });
         narratorClickTimeout.current = null;
       }, 250);
     }
@@ -639,6 +724,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const isInputDisabled = isStreaming && autoConverseStatus === 'stopped';
 
+  // Defensive check for messages
+  const displayMessages = currentSession.messages || [];
+
   return (
     <div className="flex flex-col h-full bg-background-primary">
       {isImageWindowVisible && (
@@ -658,6 +746,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             }}
         />
       )}
+      {inputModal && (
+        <InputModal 
+            title={inputModal.title}
+            label={inputModal.label}
+            placeholder={inputModal.placeholder}
+            onConfirm={inputModal.onConfirm}
+            onCancel={() => setInputModal(null)}
+        />
+      )}
       <header className="flex items-center p-3 border-b border-border-neutral">
         <div className="flex -space-x-4">
             {participants.slice(0, 3).map(p => (
@@ -671,13 +768,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       </header>
 
       <div className="flex-1 p-4 overflow-y-auto space-y-4">
-        {currentSession.messages.length === 0 ? (
+        {displayMessages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-text-secondary">
             <ChatBubbleIcon className="w-16 h-16 mb-4" />
             <p>No messages yet. Start the conversation!</p>
           </div>
         ) : (
-          currentSession.messages.map((msg, index) => {
+          displayMessages.map((msg, index) => {
             if (msg.role === 'narrator') {
               return (
                 <div key={index} className="text-center my-2 group relative">

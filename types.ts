@@ -1,3 +1,4 @@
+
 import React from 'react';
 
 export interface CryptoKeys {
@@ -76,6 +77,15 @@ export interface Character {
   voiceURI?: string; // For Text-to-Speech
   firstMessage?: string; // New: For character card compatibility
   characterType?: 'character' | 'narrator'; // New: Distinguish between persona and scenario bots
+  
+  // Advanced Features
+  backstory?: string; // Historical context
+  useSearchGrounding?: boolean; // Enable Google Search
+  thinkingBudget?: number; // 0 = off, >0 = token budget for reasoning
+  
+  // Memory Management
+  summaryApiConfig?: ApiConfig; // Dedicated LLM for memory/context operations
+
   // New RAG fields
   ragEnabled?: boolean;
   embeddingConfig?: EmbeddingConfig;
@@ -88,6 +98,9 @@ export interface Character {
   signature?: string; // Signed by the USER's master private key
   userPublicKeyJwk?: JsonWebKey; // User's public key that signed this character
   isArchived?: boolean;
+  
+  // Vault Integration
+  vaultAttachmentIds?: string[]; // IDs of files from Vault granted to this character
 }
 
 export interface Plugin {
@@ -114,6 +127,19 @@ export interface Lorebook {
     entries: LorebookEntry[];
 }
 
+// --- Vault Types ---
+export interface VaultItem {
+  id: string;
+  parentId: string; // 'root', 'not-mine', or a folder UUID
+  name: string;
+  type: 'file' | 'folder';
+  mimeType?: string; // e.g., 'image/png', 'application/json'
+  content?: string; // Base64 string or JSON string
+  size?: number;
+  createdAt: string;
+  isLocked?: boolean; // If true, requires specific password to open (simulated)
+}
+
 export interface AppData {
   characters: Character[];
   chatSessions: ChatSession[];
@@ -121,6 +147,8 @@ export interface AppData {
   lorebooks?: Lorebook[]; // New: Store all lorebooks
   // New security field
   userKeys?: CryptoKeys;
+  // Optional field used during backup/restore to transport vault contents
+  vaultItems?: VaultItem[];
 }
 
 // Types for the secure plugin API bridge

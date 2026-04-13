@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Plugin, ApiConfig, ConfirmationRequest } from '../types.ts';
 import { logger } from '../services/loggingService.ts';
@@ -271,7 +272,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({ plugins, onPlugins
 
   const currentModels = getCurrentServiceModels();
   const showApiEndpoint = ['openai', 'imagerouter'].includes(formState.settings?.service);
-  const showApiKey = ['openai', 'gemini', 'stability', 'huggingface', 'aihorde', 'imagerouter'].includes(formState.settings?.service);
+  const showApiKey = ['openai', 'gemini', 'stability', 'huggingface', 'aihorde', 'imagerouter', 'pollinations'].includes(formState.settings?.service);
 
   if (editingPlugin || isCreating) {
      return (
@@ -356,7 +357,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({ plugins, onPlugins
                           }}
                           className="mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md shadow-sm py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
                       >
-                          <option value="pollinations">Pollinations.ai (Free, No Key)</option>
+                          <option value="pollinations">Pollinations.ai (Free or Paid Key)</option>
                           <option value="aihorde">AI Horde (Free/Kudos, Slow)</option>
                           <option value="huggingface">Hugging Face (Free Tier/Pro)</option>
                           <option value="imagerouter">ImageRouter.io / OpenAI Compat</option>
@@ -426,7 +427,7 @@ export const PluginManager: React.FC<PluginManagerProps> = ({ plugins, onPlugins
                             value={formState.settings?.apiKey || ''}
                             onChange={(e) => handleSettingsChange('apiKey', e.target.value)}
                             className="mt-1 block w-full bg-nexus-gray-light-100 dark:bg-nexus-gray-800 border border-nexus-gray-light-400 dark:border-nexus-gray-700 rounded-md shadow-sm py-2 px-3 text-nexus-gray-900 dark:text-white focus:outline-none focus:ring-nexus-blue-500 focus:border-nexus-blue-500"
-                            placeholder={formState.settings?.service === 'aihorde' ? '0000000000 for Anonymous' : 'Enter API Key'}
+                            placeholder={formState.settings?.service === 'aihorde' ? '0000000000 for Anonymous' : 'Enter API Key (Optional for Pollinations Free)'}
                           />
                         </div>
                     )}

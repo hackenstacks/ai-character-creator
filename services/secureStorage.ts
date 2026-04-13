@@ -1,4 +1,5 @@
-import { AppData, ChatSession, VectorChunk, Character } from '../types.ts';
+
+import { AppData, ChatSession, VectorChunk, Character, VaultItem } from '../types.ts';
 import { STORAGE_KEY_DATA, STORAGE_KEY_PASS_VERIFIER, STORAGE_KEY_SALT } from '../constants.ts';
 import { logger } from './loggingService.ts';
 
@@ -95,6 +96,36 @@ const decryptData = async (encryptedBase64: string, key: CryptoKey): Promise<str
     return decoder.decode(decryptedBuffer);
 };
 
+// --- Public Ad-Hoc Encryption for Sharing ---
+// These functions allow encrypting specific pieces of data with a specific password
+// totally separate from the master database key. Used for the Vault "Secure Share".
+
+export const encryptPackage = async (data: string, password: string): Promise<string> => {
+    const salt = window.crypto.getRandomValues(new Uint8Array(16));
+    const key = await deriveKey(password, salt);
+    const encrypted = await encryptData(data, key);
+    
+    // Package format: JSON { salt: base64, data: base64 }
+    const packageObj = {
+        salt: arrayBufferToBase64(salt),
+        data: encrypted
+    };
+    return JSON.stringify(packageObj);
+};
+
+export const decryptPackage = async (packageJson: string, password: string): Promise<string> => {
+    try {
+        const pkg = JSON.parse(packageJson);
+        if (!pkg.salt || !pkg.data) throw new Error("Invalid package format");
+        
+        const salt = new Uint8Array(base64ToArrayBuffer(pkg.salt));
+        const key = await deriveKey(password, salt);
+        return await decryptData(pkg.data, key);
+    } catch (e) {
+        throw new Error("Decryption failed. Wrong password or corrupted file.");
+    }
+};
+
 
 // --- Legacy XOR Cipher (for migration only) ---
 
@@ -121,7 +152,8 @@ const DB_NAME = 'AINexusDB';
 const STORE_NAME = 'appDataStore';
 const VECTOR_STORE_NAME = 'vectorStore';
 const IMAGE_STORE_NAME = 'imageStore';
-const DB_VERSION = 3;
+const VAULT_STORE_NAME = 'vaultStore'; // New Store
+const DB_VERSION = 4; // Increment Version
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -152,6 +184,11 @@ const getDB = (): Promise<IDBDatabase> => {
                 }
                 if (!db.objectStoreNames.contains(IMAGE_STORE_NAME)) {
                     db.createObjectStore(IMAGE_STORE_NAME);
+                }
+                if (!db.objectStoreNames.contains(VAULT_STORE_NAME)) {
+                    // New vault store
+                    const vaultStore = db.createObjectStore(VAULT_STORE_NAME, { keyPath: 'id' });
+                    vaultStore.createIndex('parentId', 'parentId', { unique: false });
                 }
             };
         });
@@ -314,7 +351,6 @@ export const loadData = async (): Promise<AppData> => {
     }
 };
 
-// FIX: Add functions to manage RAG vector data in IndexedDB.
 // --- Vector DB Operations ---
 
 export const saveVectorChunks = async (chunks: VectorChunk[]): Promise<void> => {
@@ -360,4 +396,108 @@ export const deleteVectorChunksBySource = async (sourceId: string): Promise<void
         transaction.oncomplete = () => resolve();
         transaction.onerror = () => reject(transaction.error);
     });
+};
+
+// --- Vault Operations ---
+
+export const saveVaultItem = async (item: VaultItem): Promise<void> => {
+    // Encrypt the item content itself using the MASTER key before storing in IDB
+    // This ensures local security (at rest).
+    // Note: When 'Sharing', we use a separate encryption flow.
+    
+    if (!masterCryptoKey) throw new Error("Vault locked.");
+    
+    // We clone the item to avoid mutating the in-memory state
+    const itemToStore = { ...item };
+    
+    if (itemToStore.content) {
+        itemToStore.content = await encryptData(itemToStore.content, masterCryptoKey);
+    }
+
+    const db = await getDB();
+    return new Promise<void>((resolve, reject) => {
+        const transaction = db.transaction(VAULT_STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(VAULT_STORE_NAME);
+        const request = store.put(itemToStore);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve();
+    });
+};
+
+export const deleteVaultItem = async (id: string): Promise<void> => {
+    const db = await getDB();
+    return new Promise<void>((resolve, reject) => {
+        const transaction = db.transaction(VAULT_STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(VAULT_STORE_NAME);
+        const request = store.delete(id);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve();
+    });
+};
+
+export const getVaultItems = async (parentId?: string): Promise<VaultItem[]> => {
+    if (!masterCryptoKey) throw new Error("Vault locked.");
+
+    const db = await getDB();
+    return new Promise<VaultItem[]>((resolve, reject) => {
+        const transaction = db.transaction(VAULT_STORE_NAME, 'readonly');
+        const store = transaction.objectStore(VAULT_STORE_NAME);
+        let request;
+        
+        if (parentId) {
+            const index = store.index('parentId');
+            request = index.getAll(parentId);
+        } else {
+            request = store.getAll();
+        }
+
+        request.onerror = () => reject(request.error);
+        request.onsuccess = async () => {
+            const items = request.result as VaultItem[];
+            // Decrypt content on the fly
+            const decryptedItems = await Promise.all(items.map(async (item) => {
+                if (item.content) {
+                    try {
+                        item.content = await decryptData(item.content, masterCryptoKey!);
+                    } catch (e) {
+                        logger.error("Failed to decrypt vault item", e);
+                        item.content = "Error: Decryption failed";
+                    }
+                }
+                return item;
+            }));
+            resolve(decryptedItems);
+        };
+    });
+};
+
+export const getVaultItemsByIds = async (ids: string[]): Promise<VaultItem[]> => {
+    if (!masterCryptoKey) throw new Error("Vault locked.");
+    if (!ids || ids.length === 0) return [];
+
+    const db = await getDB();
+    const transaction = db.transaction(VAULT_STORE_NAME, 'readonly');
+    const store = transaction.objectStore(VAULT_STORE_NAME);
+
+    const promises = ids.map(id => {
+        return new Promise<VaultItem | undefined>((resolve, reject) => {
+            const request = store.get(id);
+            request.onerror = () => resolve(undefined); // Skip failed items
+            request.onsuccess = async () => {
+                const item = request.result as VaultItem;
+                if (item && item.content) {
+                    try {
+                        item.content = await decryptData(item.content, masterCryptoKey!);
+                    } catch (e) {
+                        logger.error(`Failed to decrypt vault item ${id}`, e);
+                        item.content = "Error: Decryption failed";
+                    }
+                }
+                resolve(item);
+            };
+        });
+    });
+
+    const results = await Promise.all(promises);
+    return results.filter((item): item is VaultItem => item !== undefined);
 };

@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Character, ChatSession, AppData, Plugin, GeminiApiRequest, Message, CryptoKeys, RagSource, ConfirmationRequest, UISettings, Lorebook } from '../types';
-import { loadData, saveData } from '../services/secureStorage';
+import { Character, ChatSession, AppData, Plugin, GeminiApiRequest, Message, CryptoKeys, RagSource, ConfirmationRequest, UISettings, Lorebook, VaultItem } from '../types';
+import { loadData, saveData, getVaultItems, saveVaultItem } from '../services/secureStorage';
 import * as ragService from '../services/ragService';
 import { CharacterList } from './CharacterList';
 import { ChatList } from './ChatList';
@@ -14,6 +15,7 @@ import { ChatSelectionModal } from './ChatSelectionModal';
 import { ConfirmationModal } from './ConfirmationModal';
 import { ThemeSwitcher } from './ThemeSwitcher';
 import { AppearanceModal } from './AppearanceModal';
+import { Vault } from './Vault'; // Import Vault
 import { PluginSandbox } from '../services/pluginSandbox';
 import * as geminiService from '../services/geminiService';
 import * as compatibilityService from '../services/compatibilityService';
@@ -29,6 +31,7 @@ import { ChatBubbleIcon } from './icons/ChatBubbleIcon';
 import { UsersIcon } from './icons/UsersIcon';
 import { PaletteIcon } from './icons/PaletteIcon';
 import { GlobeIcon } from './icons/GlobeIcon';
+import { VaultIcon } from './icons/VaultIcon'; // Import Icon
 
 
 const defaultImagePlugin: Plugin = {
@@ -109,6 +112,12 @@ export const MainLayout: React.FC = () => {
     const [isHelpVisible, setIsHelpVisible] = useState(false);
     const [isChatModalVisible, setIsChatModalVisible] = useState(false);
     const [isAppearanceModalVisible, setIsAppearanceModalVisible] = useState(false);
+    
+    // Vault State Management
+    const [isVaultVisible, setIsVaultVisible] = useState(false);
+    const [vaultMode, setVaultMode] = useState<'manage' | 'select'>('manage');
+    const [vaultSelectionCallback, setVaultSelectionCallback] = useState<((ids: string[]) => void) | null>(null);
+
     const [confirmationRequest, setConfirmationRequest] = useState<ConfirmationRequest | null>(null);
 
     const [showArchivedChats, setShowArchivedChats] = useState(false);
@@ -147,6 +156,29 @@ export const MainLayout: React.FC = () => {
             try {
                 const data = await loadData();
                 let dataNeedsSave = false;
+
+                // --- Data Sanitization & Normalization ---
+                // Ensure all arrays exist to prevent crashes on render if backup was partial
+                if (!Array.isArray(data.characters)) { data.characters = []; dataNeedsSave = true; }
+                if (!Array.isArray(data.chatSessions)) { data.chatSessions = []; dataNeedsSave = true; }
+                if (!Array.isArray(data.plugins)) { data.plugins = []; dataNeedsSave = true; }
+                if (!Array.isArray(data.lorebooks)) { data.lorebooks = []; dataNeedsSave = true; }
+
+                // Deep sanitize characters
+                data.characters = data.characters.map(c => ({
+                    ...c,
+                    tags: Array.isArray(c.tags) ? c.tags : [],
+                    lore: Array.isArray(c.lore) ? c.lore : [],
+                    vaultAttachmentIds: Array.isArray(c.vaultAttachmentIds) ? c.vaultAttachmentIds : []
+                }));
+
+                // Deep sanitize sessions
+                data.chatSessions = data.chatSessions.map(s => ({
+                    ...s,
+                    messages: Array.isArray(s.messages) ? s.messages : [],
+                    characterIds: Array.isArray(s.characterIds) ? s.characterIds : [],
+                    lorebookIds: Array.isArray(s.lorebookIds) ? s.lorebookIds : []
+                }));
                 
                 // --- Key Generation and Migration ---
                 if (!data.userKeys) {
@@ -179,8 +211,7 @@ export const MainLayout: React.FC = () => {
                 }
 
                 const defaultPlugins = [defaultImagePlugin, defaultTtsPlugin];
-                if (!data.plugins) data.plugins = [];
-
+                
                 defaultPlugins.forEach(defaultPlugin => {
                     let hasPlugin = data.plugins!.some(p => p.id === defaultPlugin.id);
                     if (!hasPlugin) {
@@ -207,7 +238,9 @@ export const MainLayout: React.FC = () => {
                 
                 setAppData(data);
                 if (data.chatSessions.length > 0) {
-                    setSelectedChatId(data.chatSessions.find(cs => !cs.isArchived)?.id || data.chatSessions[0].id);
+                    // Try to find a non-archived chat, otherwise first one
+                    const initialChat = data.chatSessions.find(cs => !cs.isArchived) || data.chatSessions[0];
+                    setSelectedChatId(initialChat.id);
                     setActiveView('chat');
                 } else {
                     if (data.characters.length > 0) {
@@ -534,15 +567,21 @@ export const MainLayout: React.FC = () => {
 
     const handleSaveBackup = useCallback(async () => {
         try {
+            // Fetch vault items to include in backup
+            const vaultItems = await getVaultItems();
+            
             const dataToExport = {
                 spec: 'ai_nexus_backup',
                 version: '1.0',
-                data: appData
+                data: {
+                    ...appData,
+                    vaultItems // Include vault items in export
+                }
             };
             const timestamp = new Date().toISOString().split('T')[0];
             const filename = `ai-nexus-backup-${timestamp}.json`;
             triggerDownload(filename, dataToExport);
-            logger.log("Full backup saved successfully.", { filename });
+            logger.log("Full backup saved successfully (including Vault).", { filename });
         } catch (error) {
             logger.error("Failed to save backup.", error);
             alert("Failed to save backup. Check logs for details.");
@@ -580,10 +619,22 @@ export const MainLayout: React.FC = () => {
         logger.log(`Starting data import from file: ${file.name}`);
         const reader = new FileReader();
 
-        reader.onerror = (error) => {
-            logger.error("FileReader failed to read the file.", error);
-            alert("An error occurred while trying to read the file.");
+        const cleanup = () => {
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
         };
+
+        reader.onerror = () => {
+            logger.error("FileReader failed to read the file.", reader.error);
+            alert("An error occurred while trying to read the file: " + (reader.error?.message || "Unknown error"));
+            cleanup();
+        };
+
+        reader.onabort = () => {
+            logger.warn("File reading aborted.");
+            cleanup();
+        }
         
         reader.onload = async (e) => {
             logger.log("File has been loaded into memory. Processing content...");
@@ -612,10 +663,40 @@ export const MainLayout: React.FC = () => {
                     setConfirmationRequest({
                         message: 'This is a full backup file. Importing it will overwrite all current data. Are you sure?',
                         onConfirm: async () => {
+                            // Extract Vault items if present
+                            if (data.data.vaultItems && Array.isArray(data.data.vaultItems)) {
+                                logger.log(`Restoring ${data.data.vaultItems.length} items to Secure Vault...`);
+                                for (const item of data.data.vaultItems) {
+                                    await saveVaultItem(item);
+                                }
+                                // Remove vaultItems from the main data blob to keep it clean
+                                delete data.data.vaultItems;
+                            }
+
                             await persistData(data.data);
                             alert('Backup restored successfully! The application will now reload.');
                             setConfirmationRequest(null);
                             window.location.reload();
+                        },
+                        onCancel: () => setConfirmationRequest(null)
+                    });
+                    return;
+                }
+                
+                // 1.5. AI Nexus Vault Export
+                if (data.spec === 'ai_nexus_vault_export' && Array.isArray(data.data)) {
+                    logger.log("Detected Vault Export file.");
+                    setConfirmationRequest({
+                        message: `This file contains ${data.data.length} vault items. Import them into your Secure Vault? Existing items with the same ID will be updated.`,
+                        onConfirm: async () => {
+                            let count = 0;
+                            for (const item of data.data) {
+                                await saveVaultItem(item);
+                                count++;
+                            }
+                            logger.log(`Imported ${count} items to Vault.`);
+                            alert(`Successfully imported ${count} items to the Vault.`);
+                            setConfirmationRequest(null);
                         },
                         onCancel: () => setConfirmationRequest(null)
                     });
@@ -698,9 +779,7 @@ export const MainLayout: React.FC = () => {
                 logger.error("Import failed during processing:", error);
                 alert(`Failed to import data. Error: ${error instanceof Error ? error.message : String(error)}`);
             } finally {
-                if (fileInputRef.current) {
-                    fileInputRef.current.value = '';
-                }
+                cleanup();
             }
         };
 
@@ -820,6 +899,28 @@ export const MainLayout: React.FC = () => {
         await persistData(updatedData);
         logger.log("UI appearance settings updated for chat:", selectedChatId);
     }, [appData, persistData, selectedChatId]);
+    
+    // Vault Coordination
+    const handleOpenVaultSelection = (callback: (ids: string[]) => void) => {
+        setVaultSelectionCallback(() => callback);
+        setVaultMode('select');
+        setIsVaultVisible(true);
+    };
+    
+    const handleVaultSelectionConfirm = (ids: string[]) => {
+        if (vaultSelectionCallback) {
+            vaultSelectionCallback(ids);
+        }
+        setIsVaultVisible(false);
+        setVaultSelectionCallback(null);
+        setVaultMode('manage'); // Reset
+    };
+    
+    const handleVaultClose = () => {
+        setIsVaultVisible(false);
+        setVaultSelectionCallback(null);
+        setVaultMode('manage'); // Reset
+    };
 
     const selectedChat = appData.chatSessions.find(s => s.id === selectedChatId);
 
@@ -832,6 +933,7 @@ export const MainLayout: React.FC = () => {
                     onCancel={() => setActiveView('chat')}
                     onDeleteRagSource={handleDeleteRagSource}
                     onGenerateImage={handleGenerateImage}
+                    onOpenVaultSelection={handleOpenVaultSelection}
                 />;
             case 'plugins':
                 return <PluginManager
@@ -948,6 +1050,13 @@ export const MainLayout: React.FC = () => {
                     onClose={() => setIsAppearanceModalVisible(false)}
                 />
             )}
+            {isVaultVisible && (
+                <Vault 
+                    onClose={handleVaultClose} 
+                    mode={vaultMode}
+                    onConfirmSelection={handleVaultSelectionConfirm}
+                />
+            )}
             {confirmationRequest && (
                 <ConfirmationModal 
                     message={confirmationRequest.message}
@@ -973,6 +1082,9 @@ export const MainLayout: React.FC = () => {
 
                     <div className="w-8 border-t border-border-neutral my-2"></div>
                     
+                    <button onClick={() => { setIsVaultVisible(true); setVaultMode('manage'); }} title="Secure Vault" className="p-2 rounded-lg text-text-secondary hover:bg-background-tertiary">
+                        <VaultIcon className="w-6 h-6" />
+                    </button>
                     <button onClick={() => setIsAppearanceModalVisible(true)} title="Appearance Settings" className="p-2 rounded-lg text-text-secondary hover:bg-background-tertiary">
                         <PaletteIcon className="w-6 h-6" />
                     </button>

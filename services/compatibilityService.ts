@@ -1,3 +1,4 @@
+
 import { Character, Lorebook, LorebookEntry } from '../types.ts';
 import { logger } from './loggingService.ts';
 
@@ -108,7 +109,14 @@ export const v2ToNexus = (card: any): { character: Character, lorebook?: Loreboo
     if (!card) return null;
 
     // Handle different structures: { spec: ..., data: ... } or just { name: ... }
-    const data = card.data || card; 
+    let data = card.data || card; 
+    
+    // Handle format where character data is nested under 'persona' (e.g. signed cards)
+    // If 'data' doesn't have a name but 'card.persona' exists and is an object, try using that.
+    if (!data.name && card.persona && typeof card.persona === 'object') {
+        data = card.persona;
+        logger.log("Detected nested 'persona' object in file.");
+    }
     
     // Basic validation: must have a name
     if (!data || !data.name) {
